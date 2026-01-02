@@ -74,7 +74,9 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.preference.PreferenceManager;
+import android.provider.Settings;
 import android.util.Rational;
 import android.util.TypedValue;
 import android.view.Display;
@@ -108,8 +110,10 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 
 public class Game extends Activity implements SurfaceHolder.Callback,
@@ -134,6 +138,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private static final int STYLUS_UP_DEAD_ZONE_RADIUS = 50;
 
     private static final int THREE_FINGER_TAP_THRESHOLD = 300;
+
+    private int maxPointerCount = 0;
 
     private ControllerHandler controllerHandler;
     private KeyboardTranslator keyboardTranslator;
@@ -226,6 +232,29 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        //自动获取无障碍权限
+        try {
+            ComponentName cn = new ComponentName(this, KeyboardAccessibilityService.class);
+            String myService = cn.flattenToString();
+            String enabledServices = Settings.Secure.getString(getContentResolver(),
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+
+            if (enabledServices == null || !enabledServices.contains(myService)) {
+                if (enabledServices == null || enabledServices.isEmpty()) {
+                    enabledServices = myService;
+                } else {
+                    enabledServices += ":" + myService;
+                }
+
+                // 这里可能会抛异常
+                Settings.Secure.putString(getContentResolver(),
+                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, enabledServices);
+            }
+        } catch (SecurityException e) {
+            // 没无障碍权限
+        }
+
 
         instance=this;
 
@@ -1584,8 +1613,81 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         return handleKeyDown(event) || super.onKeyDown(keyCode, event);
     }
 
+    private final Set<Integer> pressedKeys = new HashSet<>();
+    // 0代表未按下，1代表按下esc，2代表按下自定义组合键
+    private int escState = 0; // 0 = 空闲，1 = ESC已按下，2 = 已进入组合键
+    private Handler handler = new Handler(Looper.getMainLooper());
+    private Runnable escConfirmRunnable;
     @Override
     public boolean handleKeyDown(KeyEvent event) {
+        // 自定义组合键，只能其它+esc，esc+其它时，esc抬起时其它才会down
+        int keyCode = event.getKeyCode();
+        pressedKeys.add(keyCode);
+        if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+            escState = 1;
+//            Log.d("debug", "Esc: Down");
+            // 启动延迟判断是否是单独的ESC键
+            escConfirmRunnable = () -> {
+                if (escState == 1) {
+//                    Log.d("debug", "Esc: Confirmed as Single");
+                    short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    escState = 0;
+                }
+            };
+            handler.postDelayed(escConfirmRunnable, 200); // 延迟判断
+            return true;
+        }
+
+        if (escState == 1) {
+            // 若在ESC后检测到自定义键按下，取消ESC单键判断
+            handler.removeCallbacks(escConfirmRunnable);
+
+            if (keyCode == KeyEvent.KEYCODE_Q) {
+//                Log.d("debug", "Esc + Q: Down");
+                escState = 2;
+                return true;
+            }
+            else if (keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_9) {
+//                Log.d("debug", "Esc + num: Down");
+                escState = 2;
+                int fKeyCode = KeyEvent.KEYCODE_F1 + (keyCode - KeyEvent.KEYCODE_1);
+                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                return true;
+            }
+            else if (keyCode == KeyEvent.KEYCODE_0) {
+//                Log.d("debug", "Esc + 0: Down -> F10");
+                escState = 2;
+                int fKeyCode = KeyEvent.KEYCODE_F10;
+                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                return true;
+            }
+            else if (keyCode == KeyEvent.KEYCODE_MINUS) {
+//                Log.d("debug", "Esc + -: Down -> F11");
+                escState = 2;
+                int fKeyCode = KeyEvent.KEYCODE_F11;
+                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                return true;
+            }
+            else if (keyCode == KeyEvent.KEYCODE_EQUALS) {
+//                Log.d("debug", "Esc + =: Down -> F12");
+                escState = 2;
+                int fKeyCode = KeyEvent.KEYCODE_F12;
+                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                return true;
+            }
+            else{
+                // 非自定义组合键，不做处理
+                short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
+                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                escState = 0;
+            }
+        }
+
         // Pass-through virtual navigation keys
         if ((event.getFlags() & KeyEvent.FLAG_VIRTUAL_HARD_KEY) != 0) {
             return false;
@@ -1608,6 +1710,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
             // Always return true, otherwise the back press will be propagated
             // up to the parent and finish the activity.
+            return true;
+        }
+
+        // 鼠标中键（同时影响触摸返回）
+        if (eventSource == InputDevice.SOURCE_KEYBOARD &&
+                event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+//            Log.d("debug", "handleKeyDown: " + event.getKeyCode());
+            conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_MIDDLE);
             return true;
         }
 
@@ -1668,6 +1778,73 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public boolean handleKeyUp(KeyEvent event) {
+//        Log.d("debug", "KeyUpGetKeyCode: " + event.getKeyCode());
+        int keyCode = event.getKeyCode();
+        pressedKeys.remove(keyCode);
+
+        if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+            handler.removeCallbacks(escConfirmRunnable); // 若未执行则移除
+            if (escState == 1) {
+                // 没有组合键，短时间内抬起
+//                Log.d("debug", "Esc: Up (no combo)");
+                short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
+                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                // 延迟发送 KEY_UP，不堵塞主线程
+                handler.postDelayed(() -> {
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                }, 50); // 延迟 50ms
+                escState = 0;
+            } else if (escState == 2) {
+                // 组合键已触发，不处理ESC
+//                Log.d("debug", "Esc: Up (combo)");
+                escState = 0;
+            }else{
+//                Log.d("debug", "Esc: Up (no custom combo)");
+                short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
+                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                escState = 0;
+            }
+
+            return true;
+        }
+        if(escState == 2){
+            if (keyCode == KeyEvent.KEYCODE_Q) {
+//                Log.d("debug", "Esc + Q: Up");
+                if (prefConfig.enableQtDialog) {
+                    showGameMenu(null);
+                }
+                return true;
+            }
+            if (keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_9) {
+//                Log.d("debug", "Esc + num: Up");
+                int fKeyCode = KeyEvent.KEYCODE_F1 + (keyCode - KeyEvent.KEYCODE_1);
+                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_0) {
+//                Log.d("debug", "Esc + 0: Up -> F10");
+                int fKeyCode = KeyEvent.KEYCODE_F10;
+                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_MINUS) {
+//                Log.d("debug", "Esc + -: Up -> F11");
+                int fKeyCode = KeyEvent.KEYCODE_F11;
+                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                return true;
+            }
+            if (keyCode == KeyEvent.KEYCODE_EQUALS) {
+//                Log.d("debug", "Esc + =: Up -> F12");
+                int fKeyCode = KeyEvent.KEYCODE_F12;
+                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                return true;
+            }
+        }
+
         // Pass-through virtual navigation keys
         if ((event.getFlags() & KeyEvent.FLAG_VIRTUAL_HARD_KEY) != 0) {
             return false;
@@ -1676,6 +1853,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // Handle a synthetic back button event that some Android OS versions
         // create as a result of a right-click.
         int eventSource = event.getSource();
+//        Log.d("debug", "eventSource: " + event.getSource());
         if ((eventSource == InputDevice.SOURCE_MOUSE ||
                 eventSource == InputDevice.SOURCE_MOUSE_RELATIVE) &&
                 event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
@@ -1689,6 +1867,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
             // Always return true, otherwise the back press will be propagated
             // up to the parent and finish the activity.
+            return true;
+        }
+
+        // 鼠标中键（同时影响触摸返回）
+        if (eventSource == InputDevice.SOURCE_KEYBOARD &&
+                event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+//            Log.d("debug", "handleKeyUp: " + event.getKeyCode());
+            conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_MIDDLE);
             return true;
         }
 
@@ -2372,34 +2558,66 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 }
 
                 //五指打开输入法
-                if(prefConfig.quickSoftKeyboardFingers>0){
-                    switch (event.getActionMasked()){
-                        case MotionEvent.ACTION_POINTER_DOWN:
-                            if(event.getPointerCount() == prefConfig.quickSoftKeyboardFingers){
-                                threeFingerDownTime = event.getEventTime();
-                                // Cancel the first and second touches to avoid
-                                // erroneous events
-                                for (TouchContext aTouchContext : touchContextMap) {
-                                    aTouchContext.cancelTouch();
+//                if(prefConfig.quickSoftKeyboardFingers>0){
+//                    switch (event.getActionMasked()){
+//                        case MotionEvent.ACTION_POINTER_DOWN:
+//                            if(event.getPointerCount() == prefConfig.quickSoftKeyboardFingers){
+//                                threeFingerDownTime = event.getEventTime();
+//                                // Cancel the first and second touches to avoid
+//                                // erroneous events
+//                                for (TouchContext aTouchContext : touchContextMap) {
+//                                    aTouchContext.cancelTouch();
+//                                }
+//                                return true;
+//                            }
+//                            break;
+//                        case MotionEvent.ACTION_UP:
+//                        case MotionEvent.ACTION_POINTER_UP:
+//                            if (event.getPointerCount() == 1 &&
+//                                    (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || (event.getFlags() & MotionEvent.FLAG_CANCELED) == 0)) {
+//                                // All fingers up
+//                                if (event.getEventTime() - threeFingerDownTime < THREE_FINGER_TAP_THRESHOLD) {
+//                                    // This is a 3 finger tap to bring up the keyboard
+//                                    conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0,
+//                                            0, 0, 0, 0, 0,
+//                                            MoonBridge.LI_ROT_UNKNOWN);
+//                                    toggleKeyboard();
+//                                    return true;
+//                                }
+//                            }
+//                    }
+//                }
+                //四指打开菜单，五指打开输入法
+                switch (event.getActionMasked()){
+                    case MotionEvent.ACTION_DOWN:
+                        maxPointerCount = 1;
+                        break;
+                    case MotionEvent.ACTION_POINTER_DOWN:
+                        maxPointerCount = Math.max(maxPointerCount, event.getPointerCount());
+                        break;
+                    case MotionEvent.ACTION_UP:
+                    case MotionEvent.ACTION_POINTER_UP:
+                        if (event.getPointerCount() == 1 &&
+                                (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || (event.getFlags() & MotionEvent.FLAG_CANCELED) == 0)) {
+                            if(maxPointerCount == 4){
+                                // 打开菜单
+                                if(prefConfig.enableQtDialog){
+                                    showGameMenu(null);
                                 }
+                                // 重置 maxPointerCount
+                                maxPointerCount = 0;
+                                conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0, 0, 0, 0, 0, 0, MoonBridge.LI_ROT_UNKNOWN);
                                 return true;
                             }
-                            break;
-                        case MotionEvent.ACTION_UP:
-                        case MotionEvent.ACTION_POINTER_UP:
-                            if (event.getPointerCount() == 1 &&
-                                    (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || (event.getFlags() & MotionEvent.FLAG_CANCELED) == 0)) {
-                                // All fingers up
-                                if (event.getEventTime() - threeFingerDownTime < THREE_FINGER_TAP_THRESHOLD) {
-                                    // This is a 3 finger tap to bring up the keyboard
-                                    conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0,
-                                            0, 0, 0, 0, 0,
-                                            MoonBridge.LI_ROT_UNKNOWN);
-                                    toggleKeyboard();
-                                    return true;
-                                }
+                            else if (maxPointerCount == 5) {
+                                toggleKeyboard();
+                                // 重置 maxPointerCount
+                                maxPointerCount = 0;
+                                conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0, 0, 0, 0, 0, 0, MoonBridge.LI_ROT_UNKNOWN);
+                                return true;
                             }
-                    }
+                        }
+                        break;
                 }
 
                 // TODO: Re-enable native touch when have a better solution for handling
@@ -3379,7 +3597,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private AXFloatingView floatingView;
     private void initFloatingView(){
         floatingView = new AXFloatingView(this);
-        floatingView.setIconImage(R.drawable.app_icon_axi);
+        floatingView.setIconImage(R.drawable.app_icon);
         floatingView.setLayoutParams(AXFloatingView.getLayParams());
         ViewGroup decorViewGroup= (ViewGroup) getWindow().getDecorView();
         decorViewGroup.addView(floatingView);
