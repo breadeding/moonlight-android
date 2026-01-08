@@ -1,6 +1,8 @@
 package com.limelight;
 
 
+import static com.limelight.ui.gamemenu.GameMenuFragment.sendKeys;
+
 import com.limelight.binding.PlatformBinding;
 import com.limelight.binding.audio.AndroidAudioRenderer;
 import com.limelight.binding.input.ControllerHandler;
@@ -60,6 +62,7 @@ import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.graphics.Matrix;
 import android.graphics.Outline;
 import android.graphics.Point;
 import android.graphics.Rect;
@@ -77,6 +80,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.preference.PreferenceManager;
 import android.provider.Settings;
+import android.util.Log;
 import android.util.Rational;
 import android.util.TypedValue;
 import android.view.Display;
@@ -98,6 +102,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -227,6 +232,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private ConnectivityManager connManager;
 
     private TextView performanceRumble;
+
+    private ImageView localCursorView;
+    private float localCursorX = 0;
+    private float localCursorY = 0;
+    private Matrix cursorMatrix = new Matrix();
 
     @SuppressLint("MissingInflatedId")
     @Override
@@ -385,6 +395,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         performanceOverlayLite = findViewById(R.id.performanceOverlayLite);
 
         performanceOverlayBig = findViewById(R.id.performanceOverlayBig);
+
+        localCursorView = findViewById(R.id.localCursorView);
 
         inputCaptureProvider = InputCaptureManager.getInputCaptureProvider(this, this);
 
@@ -1320,6 +1332,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     protected void onPause() {
+        if(conn!=null && cursorVisible && localCursorView.getVisibility() == View.VISIBLE){
+            Log.d("debug", "onPause: 切换电脑光标显示状态");
+            // 发送快捷键切换电脑光标显示状态
+            sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+        }
+
         if (isFinishing()) {
             // Stop any further input device notifications before we lose focus (and pointer capture)
             if (controllerHandler != null) {
@@ -1455,9 +1473,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
             // Enabling capture may hide the cursor again, so
             // we will need to show it again.
-            if (cursorVisible) {
-                inputCaptureProvider.showCursor();
-            }
+//            if (cursorVisible) {
+//                inputCaptureProvider.showLocalCursor();
+//            }
         }
         else {
             inputCaptureProvider.disableCapture();
@@ -1534,18 +1552,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         finish();
                         break;
 
-                    // Toggle cursor visibility
+                    // Toggle local cursor visibility
                     case KeyEvent.KEYCODE_C:
                         if (!grabbedInput) {
                             inputCaptureProvider.enableCapture();
                             grabbedInput = true;
                         }
                         cursorVisible = !cursorVisible;
-                        if (cursorVisible) {
-                            inputCaptureProvider.showCursor();
-                        } else {
-                            inputCaptureProvider.hideCursor();
-                        }
+                        updateLocalCursorVisibility();
                         break;
 
                     default:
@@ -2382,13 +2396,28 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     short deltaY = (short)inputCaptureProvider.getRelativeAxisY(event);
 
                     if (deltaX != 0 || deltaY != 0) {
-                        if (prefConfig.absoluteMouseMode) {
-                            // NB: view may be null, but we can unconditionally use streamView because we don't need to adjust
-                            // relative axis deltas for the position of the streamView within the parent's coordinate system.
-                            conn.sendMouseMoveAsMousePosition(deltaX, deltaY, (short)streamView.getWidth(), (short)streamView.getHeight());
+                        // 计算光标绝对位置
+                        moveLocalCursor(deltaX, deltaY);
+                        if (cursorVisible) {
+                            // 提交 UI 更新
+                            syncLocalCursorUi();
+                            // 同步发送绝对坐标给远程
+                            conn.sendMousePosition(
+                                    (short)localCursorX,
+                                    (short)localCursorY,
+                                    (short)streamView.getWidth(),
+                                    (short)streamView.getHeight()
+                            );
                         }
                         else {
-                            conn.sendMouseMove(deltaX, deltaY);
+                            if (prefConfig.absoluteMouseMode) {
+                                // NB: view may be null, but we can unconditionally use streamView because we don't need to adjust
+                                // relative axis deltas for the position of the streamView within the parent's coordinate system.
+                                conn.sendMouseMoveAsMousePosition(deltaX, deltaY, (short)streamView.getWidth(), (short)streamView.getHeight());
+                            }
+                            else {
+                                conn.sendMouseMove(deltaX, deltaY);
+                            }
                         }
                     }
                 }
@@ -3026,6 +3055,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 connecting = false;
                 updatePipAutoEnter();
 
+                // 重置光标到屏幕中心（与InputStream中的absCurrentPosX保持一致）
+                localCursorX = streamView.getWidth() / 2.0f;
+                localCursorY = streamView.getHeight() / 2.0f;
+
                 // Hide the mouse cursor now after a short delay.
                 // Doing it before dismissing the spinner seems to be undone
                 // when the spinner gets displayed. On Android Q, even now
@@ -3035,6 +3068,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 h.postDelayed(new Runnable() {
                     @Override
                     public void run() {
+                        updateLocalCursorVisibility();
                         setInputGrabState(true);
                     }
                 }, 500);
@@ -3133,6 +3167,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
 
         LimeLog.info("surfaceChanged-->"+width+" x "+height + "----"+prefConfig.width+" x "+prefConfig.height);
+
         if (!attemptedConnection) {
             attemptedConnection = true;
 
@@ -3354,6 +3389,65 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }).setTitle("请选择鼠标模式").create().show();
     }
 
+    // 控制本地软件光标的显示/隐藏状态
+    public void updateLocalCursorVisibility() {
+        if (cursorVisible && localCursorView.getVisibility() == View.GONE) {
+            localCursorView.setVisibility(View.VISIBLE);
+            if(conn!=null){
+                Log.d("debug", "updateLocalCursorVisibility: 隐藏-》显示");
+                // 发送快捷键切换电脑光标显示状态
+                sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+            }
+            // 确保 UI 刷新位置
+            syncLocalCursorUi();
+        } else if(!cursorVisible && localCursorView.getVisibility() == View.VISIBLE){
+            if(conn!=null){
+                Log.d("debug", "updateLocalCursorVisibility: 显示-》隐藏");
+                // 发送快捷键切换电脑光标显示状态
+                sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+            }
+            localCursorView.setVisibility(View.GONE);
+        }
+    }
+
+    // 刷新 ImageView 在屏幕上的绝对位置
+    private void syncLocalCursorUi() {
+        if (localCursorView == null || streamView == null) return;
+
+        // 1. 计算图片应该在全屏画布上的绝对位置
+        // streamView.getX() 是视频流在屏幕上的起点
+        float absoluteX = streamView.getX() + localCursorX;
+        float absoluteY = streamView.getY() + localCursorY;
+
+        // 2. 重置矩阵并设置平移
+        cursorMatrix.reset();
+        cursorMatrix.postTranslate(absoluteX, absoluteY);
+
+        // 3. 应用矩阵到 ImageView
+        localCursorView.setImageMatrix(cursorMatrix);
+
+        // 提示系统此 View 需要立即重绘，而不是等待其他布局计算
+        localCursorView.invalidateOutline();
+    }
+
+    private float clamp(float value, float max) {
+        return Math.max(0.0f, Math.min(max, value));
+    }
+
+    // 供 handleMotionEvent 调用，根据相对位移更新坐标
+    private void moveLocalCursor(float dx, float dy) {
+        // 1. 直接累加位移
+        localCursorX += dx;
+        localCursorY += dy;
+
+        // 2. 底层风格的边界限制 (使用参考宽度/高度 - 1，确保索引不越界)
+        float maxWidth = (float) streamView.getWidth() - 1.0f;
+        float maxHeight = (float) streamView.getHeight() - 1.0f;
+
+        localCursorX = clamp(localCursorX, maxWidth);
+        localCursorY = clamp(localCursorY, maxHeight);
+    }
+
     //本地鼠标光标切换
     public void switchMouseLocalCursor(){
         if (!grabbedInput) {
@@ -3361,11 +3455,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             grabbedInput = true;
         }
         cursorVisible = !cursorVisible;
-        if (cursorVisible) {
-            inputCaptureProvider.showCursor();
-        } else {
-            inputCaptureProvider.hideCursor();
-        }
+        updateLocalCursorVisibility();
     }
 
     public void switchMouseModel(int which){

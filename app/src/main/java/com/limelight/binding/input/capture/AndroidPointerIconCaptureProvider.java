@@ -22,14 +22,14 @@ public class AndroidPointerIconCaptureProvider extends InputCaptureProvider {
     }
 
     @Override
-    public void hideCursor() {
-        super.hideCursor();
+    public void enableCapture() {
+        super.enableCapture();
         targetView.setPointerIcon(PointerIcon.getSystemIcon(context, PointerIcon.TYPE_NULL));
     }
 
     @Override
-    public void showCursor() {
-        super.showCursor();
+    public void disableCapture() {
+        super.disableCapture();
         targetView.setPointerIcon(null);
     }
 }

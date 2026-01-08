@@ -110,4 +110,11 @@
 
     </LinearLayout>
 
+    <ImageView
+        android:id="@+id/localCursorView"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:scaleType="matrix"
+        android:src="@drawable/ic_mouse_cursor"
+        android:visibility="gone" />
 </merge>
