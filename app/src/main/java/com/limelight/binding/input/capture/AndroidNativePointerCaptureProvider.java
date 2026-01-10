@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.hardware.input.InputManager;
 import android.os.Build;
 import android.os.Handler;
+import android.util.Log;
 import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.view.View;
@@ -33,12 +34,46 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
     // incorrect mouse input when using the SPen.
     // https://github.com/moonlight-stream/moonlight-android/issues/1030
     private boolean hasCaptureCompatibleInputDevice() {
+//        Log.d("debug", "len: " + InputDevice.getDeviceIds().length);
+        // 平板为42，手机为6
+        int threshold = 42;
         for (int id : InputDevice.getDeviceIds()) {
             InputDevice device = InputDevice.getDevice(id);
             if (device == null) {
                 continue;
             }
+            // 华为手机的id为6的设备不是外置设备但可能认为是鼠标
+            if(id == 0)
+                threshold = 6;
+            // 华为平板的id为42的设备不是外置设备但可能认为是鼠标
+            if(id <= threshold)
+                continue;
 
+//            Log.d("debug", "id：" + id);
+//            Log.d("debug", "InputDevice.SOURCE_MOUSE：" + device.supportsSource(InputDevice.SOURCE_MOUSE));
+//            Log.d("debug", "InputDevice.SOURCE_MOUSE_RELATIVE：" + device.supportsSource(InputDevice.SOURCE_MOUSE_RELATIVE));
+//            Log.d("debug", "InputDevice.SOURCE_TOUCHPAD：" + device.supportsSource(InputDevice.SOURCE_TOUCHPAD));
+//            Log.d("debug", "InputDevice.SOURCE_BLUETOOTH_STYLUS：" + device.supportsSource(InputDevice.SOURCE_BLUETOOTH_STYLUS));
+//            Log.d("debug", "InputDevice.SOURCE_CLASS_BUTTON：" + device.supportsSource(InputDevice.SOURCE_CLASS_BUTTON));
+//            Log.d("debug", "InputDevice.SOURCE_CLASS_JOYSTICK：" + device.supportsSource(InputDevice.SOURCE_CLASS_JOYSTICK));
+//            Log.d("debug", "InputDevice.SOURCE_CLASS_MASK：" + device.supportsSource(InputDevice.SOURCE_CLASS_MASK));
+//            Log.d("debug", "InputDevice.SOURCE_CLASS_NONE：" + device.supportsSource(InputDevice.SOURCE_CLASS_NONE));
+//            Log.d("debug", "InputDevice.SOURCE_CLASS_POINTER：" + device.supportsSource(InputDevice.SOURCE_CLASS_POINTER));
+//            Log.d("debug", "InputDevice.SOURCE_CLASS_POSITION：" + device.supportsSource(InputDevice.SOURCE_CLASS_POSITION));
+//            Log.d("debug", "InputDevice.SOURCE_CLASS_TRACKBALL：" + device.supportsSource(InputDevice.SOURCE_CLASS_TRACKBALL));
+//            Log.d("debug", "InputDevice.SOURCE_DPAD：" + device.supportsSource(InputDevice.SOURCE_DPAD));
+//            Log.d("debug", "InputDevice.SOURCE_GAMEPAD：" + device.supportsSource(InputDevice.SOURCE_GAMEPAD));
+//            Log.d("debug", "InputDevice.SOURCE_HDMI：" + device.supportsSource(InputDevice.SOURCE_HDMI));
+//            Log.d("debug", "InputDevice.SOURCE_JOYSTICK：" + device.supportsSource(InputDevice.SOURCE_JOYSTICK));
+//            Log.d("debug", "InputDevice.SOURCE_KEYBOARD：" + device.supportsSource(InputDevice.SOURCE_KEYBOARD));
+//            Log.d("debug", "InputDevice.SOURCE_ROTARY_ENCODER：" + device.supportsSource(InputDevice.SOURCE_ROTARY_ENCODER));
+//            Log.d("debug", "InputDevice.SOURCE_SENSOR：" + device.supportsSource(InputDevice.SOURCE_SENSOR));
+//            Log.d("debug", "InputDevice.SOURCE_STYLUS：" + device.supportsSource(InputDevice.SOURCE_STYLUS));
+//            Log.d("debug", "InputDevice.SOURCE_TOUCHPAD：" + device.supportsSource(InputDevice.SOURCE_TOUCHPAD));
+//            Log.d("debug", "InputDevice.SOURCE_TOUCHSCREEN：" + device.supportsSource(InputDevice.SOURCE_TOUCHSCREEN));
+//            Log.d("debug", "InputDevice.SOURCE_TOUCH_NAVIGATION：" + device.supportsSource(InputDevice.SOURCE_TOUCH_NAVIGATION));
+//            Log.d("debug", "InputDevice.SOURCE_TRACKBALL：" + device.supportsSource(InputDevice.SOURCE_TRACKBALL));
+//            Log.d("debug", "InputDevice.SOURCE_UNKNOWN：" + device.supportsSource(InputDevice.SOURCE_UNKNOWN));
             // Skip touchscreens when considering compatible capture devices.
             // Samsung devices on Android 12 will report a sec_touchpad device
             // with SOURCE_TOUCHSCREEN, SOURCE_KEYBOARD, and SOURCE_MOUSE.
@@ -61,6 +96,16 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
         return false;
     }
 
+    public interface OnCaptureDeviceStatusListener {
+        void onDeviceStatusChanged(boolean hasCompatibleDevice);
+    }
+
+    private OnCaptureDeviceStatusListener statusListener;
+
+    public void setOnCaptureDeviceStatusListener(OnCaptureDeviceStatusListener listener) {
+        this.statusListener = listener;
+    }
+
     @Override
     public void enableCapture() {
         super.enableCapture();
@@ -71,6 +116,11 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
         // Capture now if we have a capture-capable device
         if (hasCaptureCompatibleInputDevice()) {
             targetView.requestPointerCapture();
+            // 通知外部：添加了外部设备
+            if (statusListener != null) {
+//                Log.d("debug", "enableCapture: ");
+                statusListener.onDeviceStatusChanged(true);
+            }
         }
     }
 
@@ -102,11 +152,13 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
         // we'll hit the "requestPointerCapture called for a window that has no focus"
         // error and it will not actually capture the cursor.
         Handler h = new Handler();
-        h.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (hasCaptureCompatibleInputDevice()) {
-                    targetView.requestPointerCapture();
+        h.postDelayed(() -> {
+            if (hasCaptureCompatibleInputDevice()) {
+                targetView.requestPointerCapture();
+                // 通知外部：添加了外部设备
+                if (statusListener != null) {
+//                    Log.d("debug", "onWindowFocusChanged: ");
+                    statusListener.onDeviceStatusChanged(true);
                 }
             }
         }, 500);
@@ -148,7 +200,12 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
     public void onInputDeviceAdded(int deviceId) {
         // Check if we've added a capture-compatible device
         if (!targetView.hasPointerCapture() && hasCaptureCompatibleInputDevice()) {
+//            Log.d("debug", "onCompatibleInputDeviceAdded: ");
             targetView.requestPointerCapture();
+            // 通知外部：添加了外部设备
+            if (statusListener != null) {
+                statusListener.onDeviceStatusChanged(true);
+            }
         }
     }
 
@@ -156,7 +213,12 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
     public void onInputDeviceRemoved(int deviceId) {
         // Check if the capture-compatible device was removed
         if (targetView.hasPointerCapture() && !hasCaptureCompatibleInputDevice()) {
+//            Log.d("debug", "onCompatibleInputDeviceRemoved: ");
             targetView.releasePointerCapture();
+            // 通知外部：移除了外部设备
+            if (statusListener != null) {
+                statusListener.onDeviceStatusChanged(false);
+            }
         }
     }
 

@@ -8,6 +8,7 @@ import com.limelight.binding.audio.AndroidAudioRenderer;
 import com.limelight.binding.input.ControllerHandler;
 import com.limelight.binding.input.GameInputDevice;
 import com.limelight.binding.input.KeyboardTranslator;
+import com.limelight.binding.input.capture.AndroidNativePointerCaptureProvider;
 import com.limelight.binding.input.capture.InputCaptureManager;
 import com.limelight.binding.input.capture.InputCaptureProvider;
 import com.limelight.binding.input.touch.AbsoluteTouchContext;
@@ -171,7 +172,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private NvApp app;
     private float desiredRefreshRate;
 
-    private InputCaptureProvider inputCaptureProvider;
+    private AndroidNativePointerCaptureProvider inputCaptureProvider;
     private int modifierFlags = 0;
     private boolean grabbedInput = true;
     private boolean cursorVisible = false;
@@ -398,7 +399,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         localCursorView = findViewById(R.id.localCursorView);
 
-        inputCaptureProvider = InputCaptureManager.getInputCaptureProvider(this, this);
+        inputCaptureProvider = new AndroidNativePointerCaptureProvider(this, streamView);
+        inputCaptureProvider.setOnCaptureDeviceStatusListener(this::updateLocalCursorVisibility);
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             streamView.setOnCapturedPointerListener(new View.OnCapturedPointerListener() {
@@ -1333,7 +1335,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     @Override
     protected void onPause() {
         if(conn!=null && cursorVisible && localCursorView.getVisibility() == View.VISIBLE){
-            Log.d("debug", "onPause: 切换电脑光标显示状态");
+//            Log.d("debug", "onPause: 切换电脑光标显示状态");
             // 发送快捷键切换电脑光标显示状态
             sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
         }
@@ -1559,7 +1561,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                             grabbedInput = true;
                         }
                         cursorVisible = !cursorVisible;
-                        updateLocalCursorVisibility();
                         break;
 
                     default:
@@ -2301,30 +2302,37 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     private boolean trySendTouchEvent(View view, MotionEvent event) {
+        boolean eventSend;
         byte eventType = getLiTouchTypeFromEvent(event);
         if (eventType < 0) {
-            return false;
+            eventSend = false;
         }
 
         if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
             // Move events may impact all active pointers
             for (int i = 0; i < event.getPointerCount(); i++) {
                 if (!sendTouchEventForPointer(view, event, eventType, i)) {
-                    return false;
+                    eventSend = false;
                 }
             }
-            return true;
+            eventSend = true;
         }
         else if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
             // Cancel impacts all active pointers
-            return conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0,
+            eventSend = conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0,
                     0, 0, 0, 0, 0,
                     MoonBridge.LI_ROT_UNKNOWN) != MoonBridge.LI_ERR_UNSUPPORTED;
         }
         else {
             // Up, Down, and Hover events are specific to the action index
-            return sendTouchEventForPointer(view, event, eventType, event.getActionIndex());
+            eventSend = sendTouchEventForPointer(view, event, eventType, event.getActionIndex());
         }
+
+        if(eventSend){
+            // 触摸隐藏鼠标
+            updateLocalCursorVisibility(false);
+        }
+        return eventSend;
     }
 
     // Returns true if the event was consumed
@@ -2399,6 +2407,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         // 计算光标绝对位置
                         moveLocalCursor(deltaX, deltaY);
                         if (cursorVisible) {
+                            // 触控时会临时关闭鼠标绘制，移动鼠标时重新打开
+                            updateLocalCursorVisibility(true);
                             // 提交 UI 更新
                             syncLocalCursorUi();
                             // 同步发送绝对坐标给远程
@@ -3068,7 +3078,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 h.postDelayed(new Runnable() {
                     @Override
                     public void run() {
-                        updateLocalCursorVisibility();
                         setInputGrabState(true);
                     }
                 }, 500);
@@ -3389,9 +3398,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }).setTitle("请选择鼠标模式").create().show();
     }
 
-    // 控制本地软件光标的显示/隐藏状态
-    public void updateLocalCursorVisibility() {
-        if (cursorVisible && localCursorView.getVisibility() == View.GONE) {
+    // 更新本地软件光标的显示/隐藏状态
+    public void updateLocalCursorVisibility(boolean hasCompatibleDevice) {
+        if (cursorVisible && hasCompatibleDevice && localCursorView.getVisibility() == View.GONE) {
             localCursorView.setVisibility(View.VISIBLE);
             if(conn!=null){
                 Log.d("debug", "updateLocalCursorVisibility: 隐藏-》显示");
@@ -3400,7 +3409,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             }
             // 确保 UI 刷新位置
             syncLocalCursorUi();
-        } else if(!cursorVisible && localCursorView.getVisibility() == View.VISIBLE){
+        } else if((!cursorVisible || !hasCompatibleDevice) && localCursorView.getVisibility() == View.VISIBLE){
             if(conn!=null){
                 Log.d("debug", "updateLocalCursorVisibility: 显示-》隐藏");
                 // 发送快捷键切换电脑光标显示状态
@@ -3455,7 +3464,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             grabbedInput = true;
         }
         cursorVisible = !cursorVisible;
-        updateLocalCursorVisibility();
     }
 
     public void switchMouseModel(int which){
