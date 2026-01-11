@@ -19,10 +19,6 @@ public abstract class InputCaptureProvider {
         return isCapturing;
     }
 
-    public boolean isCapturingActive() {
-        return isCapturing;
-    }
-
     public boolean eventHasRelativeMouseAxes(MotionEvent event) {
         return false;
     }

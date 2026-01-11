@@ -238,6 +238,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private float localCursorX = 0;
     private float localCursorY = 0;
     private Matrix cursorMatrix = new Matrix();
+    private int fakeScrollInitialY = -1;
+    private int fakeScrollInitialX = -1;
+    private int scrollTotal = 0;
+    private boolean detectScrolling = false;
 
     @SuppressLint("MissingInflatedId")
     @Override
@@ -400,7 +404,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         localCursorView = findViewById(R.id.localCursorView);
 
         inputCaptureProvider = new AndroidNativePointerCaptureProvider(this, streamView);
-        inputCaptureProvider.setOnCaptureDeviceStatusListener(this::updateLocalCursorVisibility);
+        inputCaptureProvider.setOnCaptureDeviceStatusListener(hasCompatibleDevice -> {
+            updateLocalCursorVisibility(hasCompatibleDevice, true);
+        });
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             streamView.setOnCapturedPointerListener(new View.OnCapturedPointerListener() {
@@ -1560,7 +1566,32 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                             inputCaptureProvider.enableCapture();
                             grabbedInput = true;
                         }
-                        cursorVisible = !cursorVisible;
+                        if (inputCaptureProvider.isCapturingEnabled()){
+                            cursorVisible = !cursorVisible;
+                            updateLocalCursorVisibility(inputCaptureProvider.isCapturingActive(), true);
+                        }
+                        break;
+
+                    // 切换安卓原生光标
+                    case KeyEvent.KEYCODE_V:
+                        if (inputCaptureProvider.isCapturingEnabled()) {
+                            Log.d("debug", "切换为原生光标");
+                            // 切换为原生光标
+                            if (!cursorVisible)
+                                sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+                            else
+                                updateLocalCursorVisibility(false, false);
+                            inputCaptureProvider.disableCapture();
+                        }
+                        else {
+                            Log.d("debug", "切换为非原生光标");
+                            // 切换为非原生光标
+                            if (!cursorVisible)
+                                sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+                            else
+                                updateLocalCursorVisibility(true, false);
+                            inputCaptureProvider.enableCapture();
+                        }
                         break;
 
                     default:
@@ -1580,6 +1611,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 case KeyEvent.KEYCODE_Z:
                 case KeyEvent.KEYCODE_Q:
                 case KeyEvent.KEYCODE_C:
+                case KeyEvent.KEYCODE_V:
                     // Remember that a special key combo was activated, so we can consume all key
                     // events until the modifiers come up
                     specialKeyCode = androidKeyCode;
@@ -2330,7 +2362,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         if(eventSend){
             // 触摸隐藏鼠标
-            updateLocalCursorVisibility(false);
+            updateLocalCursorVisibility(false, true);
         }
         return eventSend;
     }
@@ -2342,7 +2374,86 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         if (!grabbedInput) {
             return false;
         }
+
         int eventSource = event.getSource();
+//        Log.d("debug", "eventSource: " + eventSource);
+//        Log.d("debug", "getActionMasked: " + event.getActionMasked());
+//        Log.d("debug", "event.getX(): " + (int)event.getX());
+//        Log.d("debug", "event.getY(): " + (int)event.getY());
+        // 识别原生鼠标下的滚动逻辑：一次8194鼠标滑动+五次4098屏幕滑动
+        if (eventSource == InputDevice.SOURCE_MOUSE && event.getActionMasked() == MotionEvent.ACTION_HOVER_MOVE){
+            fakeScrollInitialY = (int)event.getY();
+            fakeScrollInitialX = (int)event.getX();
+            detectScrolling = true;
+        }
+        else if (detectScrolling){
+            // =================【开始修改部分】=================
+            // 【补丁逻辑】拦截系统通过触摸屏(Source 4098)模拟的鼠标滚轮事件
+            // 特征：X轴坐标完全不变，Y轴发生位移，且通常发生在单点触控时
+            if (eventSource == InputDevice.SOURCE_TOUCHSCREEN && event.getPointerCount() == 1) {
+                int action = event.getActionMasked();
+                if (action == MotionEvent.ACTION_DOWN) {
+                    if (fakeScrollInitialY == (int)event.getY() && fakeScrollInitialX == (int)event.getX()){
+                        fakeScrollInitialY = (int)event.getY();
+                        fakeScrollInitialX = (int)event.getX();
+                        return true;
+                    }
+                    else
+                        detectScrolling = false;
+                }
+                else if (action == MotionEvent.ACTION_MOVE) {
+                    if (fakeScrollInitialY != -1) {
+                        int deltaX = (int)(event.getX() - fakeScrollInitialX);
+                        int deltaY = (int)(event.getY() - fakeScrollInitialY);
+                        if (deltaX == 0) {
+                            // 向上滑一次时deltaY=64，向下-64
+                            fakeScrollInitialY = (int)event.getX();
+                            fakeScrollInitialY = (int)event.getY();
+                            scrollTotal = scrollTotal + deltaY;
+                            while(scrollTotal >= 64 || scrollTotal <= -64) {
+                                if(scrollTotal >= 128){
+                                    scrollTotal = scrollTotal - 128;
+                                    conn.sendMouseHighResScroll((short) 240);
+                                }
+                                else if(scrollTotal >= 64){
+                                    scrollTotal = scrollTotal - 64;
+                                    conn.sendMouseHighResScroll((short) 120);
+                                }
+                                else if(scrollTotal <= -128){
+                                    scrollTotal = scrollTotal + 128;
+                                    conn.sendMouseHighResScroll((short) -240);
+                                }
+                                else {
+                                    scrollTotal = scrollTotal + 64;
+                                    conn.sendMouseHighResScroll((short) -120);
+                                }
+                            }
+
+                            // 拦截事件，不再向下传递，避免触发点击或UI滑动
+                            return true;
+                        }
+                        else {
+                            detectScrolling = false;
+                        }
+                    }
+                }
+                else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
+                    detectScrolling = false;
+                    fakeScrollInitialY = -1;
+                    fakeScrollInitialX = -1;
+                    // 如果刚才判定为滚轮操作，那么抬起时的 UP 事件也要消耗掉
+                    if (scrollTotal >= 64 || scrollTotal <= -64) {
+                        Log.d("debug", "handleMotionEvent: 还需滚动！");
+                        return true;
+                    }
+                }
+                else
+                    detectScrolling = false;
+            }
+            else
+                detectScrolling = false;
+        }
+
         int deviceSources = event.getDevice() != null ? event.getDevice().getSources() : 0;
         if ((eventSource & InputDevice.SOURCE_CLASS_JOYSTICK) != 0) {
             if (controllerHandler.handleMotionEvent(event)) {
@@ -2389,10 +2500,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 }
 
                 // Ignore mouse input if we're not capturing from our input source
-                if (!inputCaptureProvider.isCapturingActive()) {
+                if (!inputCaptureProvider.isCapturingEnabled()) {
                     // We return true here because otherwise the events may end up causing
                     // Android to synthesize d-pad events.
-                    return true;
+//                    return true;
                 }
 
                 // Always update the position before sending any button events. If we're
@@ -2408,7 +2519,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         moveLocalCursor(deltaX, deltaY);
                         if (cursorVisible) {
                             // 触控时会临时关闭鼠标绘制，移动鼠标时重新打开
-                            updateLocalCursorVisibility(true);
+                            updateLocalCursorVisibility(true, true);
                             // 提交 UI 更新
                             syncLocalCursorUi();
                             // 同步发送绝对坐标给远程
@@ -3399,21 +3510,23 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     // 更新本地软件光标的显示/隐藏状态
-    public void updateLocalCursorVisibility(boolean hasCompatibleDevice) {
+    public void updateLocalCursorVisibility(boolean hasCompatibleDevice, boolean updateRemoteCursor) {
         if (cursorVisible && hasCompatibleDevice && localCursorView.getVisibility() == View.GONE) {
             localCursorView.setVisibility(View.VISIBLE);
             if(conn!=null){
-                Log.d("debug", "updateLocalCursorVisibility: 隐藏-》显示");
+                Log.d("debug", "鼠标绘制: 隐藏-》显示，电脑端切换显示：" + updateRemoteCursor);
                 // 发送快捷键切换电脑光标显示状态
-                sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+                if(updateRemoteCursor)
+                    sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
             }
             // 确保 UI 刷新位置
             syncLocalCursorUi();
         } else if((!cursorVisible || !hasCompatibleDevice) && localCursorView.getVisibility() == View.VISIBLE){
             if(conn!=null){
-                Log.d("debug", "updateLocalCursorVisibility: 显示-》隐藏");
+                Log.d("debug", "鼠标绘制: 显示-》隐藏，电脑端切换显示：" + updateRemoteCursor);
                 // 发送快捷键切换电脑光标显示状态
-                sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+                if(updateRemoteCursor)
+                    sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
             }
             localCursorView.setVisibility(View.GONE);
         }
