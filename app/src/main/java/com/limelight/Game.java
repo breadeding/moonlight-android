@@ -175,6 +175,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private AndroidNativePointerCaptureProvider inputCaptureProvider;
     private int modifierFlags = 0;
     private boolean grabbedInput = true;
+    private boolean useAndroidCursor;
     private boolean cursorVisible = false;
     private boolean waitingForAllModifiersUp = false;
     private int specialKeyCode = KeyEvent.KEYCODE_UNKNOWN;
@@ -238,9 +239,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private float localCursorX = 0;
     private float localCursorY = 0;
     private Matrix cursorMatrix = new Matrix();
-    private int fakeScrollInitialY = -1;
-    private int fakeScrollInitialX = -1;
-    private int scrollTotal = 0;
+    private float fakeScrollInitialY = -1;
+    private float fakeScrollInitialX = -1;
+    private float scrollTotal = 0;
+    private long lastMouseHoverTime = 0; // 记录最后一次鼠标活跃的时间
+    private boolean waitRelease = false;
     private boolean detectScrolling = false;
 
     @SuppressLint("MissingInflatedId")
@@ -333,7 +336,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         performanceRumble=findViewById(R.id.performanceRumble);
         switchPerformanceRumbleHUD();
         //光标是否显示
-        cursorVisible=prefConfig.enableMouseLocalCursor;
+        cursorVisible = prefConfig.enableMouseLocalCursor;
+        useAndroidCursor = cursorVisible;
 
 //        //串流画面 顶部居中显示
 //        if(prefConfig.enableDisplayTopCenter){
@@ -1340,9 +1344,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     protected void onPause() {
-        if(conn!=null && cursorVisible && localCursorView.getVisibility() == View.VISIBLE){
+        if(conn!=null && (useAndroidCursor || (cursorVisible && localCursorView.getVisibility() == View.VISIBLE))){
 //            Log.d("debug", "onPause: 切换电脑光标显示状态");
             // 发送快捷键切换电脑光标显示状态
+            Log.d("debug", "onPause：切换远程电脑光标显示状态");
             sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
         }
 
@@ -1481,9 +1486,15 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
             // Enabling capture may hide the cursor again, so
             // we will need to show it again.
-//            if (cursorVisible) {
-//                inputCaptureProvider.showLocalCursor();
-//            }
+            if (useAndroidCursor) {
+                Handler h = new Handler();
+                h.postDelayed(() -> {
+                    // 切换为原生光标
+                    Log.d("debug", "开启原生光标模式，切换远程电脑光标显示状态");
+                    sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+                    inputCaptureProvider.disableCapture();
+                }, 500);
+            }
         }
         else {
             inputCaptureProvider.disableCapture();
@@ -1549,6 +1560,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 switch (specialKeyCode) {
                     // Toggle input grab
                     case KeyEvent.KEYCODE_Z:
+                        Toast.makeText(this, "Toggle input grab", Toast.LENGTH_SHORT).show();
                         Handler h = getWindow().getDecorView().getHandler();
                         if (h != null) {
                             h.postDelayed(toggleGrab, 250);
@@ -1560,34 +1572,36 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         finish();
                         break;
 
-                    // Toggle local cursor visibility
+                    // Toggle local cursor mode
                     case KeyEvent.KEYCODE_C:
-                        if (!grabbedInput) {
-                            inputCaptureProvider.enableCapture();
-                            grabbedInput = true;
-                        }
-                        if (inputCaptureProvider.isCapturingEnabled()){
-                            cursorVisible = !cursorVisible;
-                            updateLocalCursorVisibility(inputCaptureProvider.isCapturingActive(), true);
-                        }
+                        Toast.makeText(this, "Toggle local cursor mode", Toast.LENGTH_SHORT).show();
+                        switchMouseLocalCursor();
                         break;
 
                     // 切换安卓原生光标
                     case KeyEvent.KEYCODE_V:
                         if (inputCaptureProvider.isCapturingEnabled()) {
+                            Toast.makeText(this, "切换为原生光标", Toast.LENGTH_SHORT).show();
                             Log.d("debug", "切换为原生光标");
+                            useAndroidCursor = true;
                             // 切换为原生光标
-                            if (!cursorVisible)
+                            if (!cursorVisible) {
+                                Log.d("debug", "KeyEvent.KEYCODE_V切换为原生光标: 切换远程电脑光标显示状态");
                                 sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+                            }
                             else
                                 updateLocalCursorVisibility(false, false);
                             inputCaptureProvider.disableCapture();
                         }
                         else {
-                            Log.d("debug", "切换为非原生光标");
-                            // 切换为非原生光标
-                            if (!cursorVisible)
+                            Toast.makeText(this, "切换为光标绘制", Toast.LENGTH_SHORT).show();
+                            Log.d("debug", "切换为光标绘制");
+                            useAndroidCursor = false;
+                            // 切换为光标绘制
+                            if (!cursorVisible) {
+                                Log.d("debug", "KeyEvent.KEYCODE_V切换为光标绘制：切换远程电脑光标显示状态");
                                 sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+                            }
                             else
                                 updateLocalCursorVisibility(true, false);
                             inputCaptureProvider.enableCapture();
@@ -2280,6 +2294,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     private boolean trySendPenEvent(View view, MotionEvent event) {
+        boolean eventSend;
         byte eventType = getLiTouchTypeFromEvent(event);
         if (eventType < 0) {
             return false;
@@ -2304,11 +2319,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     return false;
                 }
             }
-            return handledStylusEvent;
+            eventSend = handledStylusEvent;
         }
         else if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
             // Cancel impacts all active pointers
-            return conn.sendPenEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, MoonBridge.LI_TOOL_TYPE_UNKNOWN, (byte)0,
+            eventSend = conn.sendPenEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, MoonBridge.LI_TOOL_TYPE_UNKNOWN, (byte)0,
                     0, 0, 0, 0, 0,
                     MoonBridge.LI_ROT_UNKNOWN, MoonBridge.LI_TILT_UNKNOWN) != MoonBridge.LI_ERR_UNSUPPORTED;
         }
@@ -2319,8 +2334,20 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 // Not a stylus event
                 return false;
             }
-            return sendPenEventForPointer(view, event, eventType, toolType, event.getActionIndex());
+            eventSend = sendPenEventForPointer(view, event, eventType, toolType, event.getActionIndex());
         }
+
+        if(eventSend){
+            // 触控笔隐藏鼠标
+            if(localCursorView.getVisibility() == View.VISIBLE){
+                if(conn!=null){
+                    Log.d("debug", "触控笔隐藏鼠标，切换远程电脑光标显示状态");
+                    sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+                }
+                localCursorView.setVisibility(View.GONE);
+            }
+        }
+        return eventSend;
     }
 
     private boolean sendTouchEventForPointer(View view, MotionEvent event, byte eventType, int pointerIndex) {
@@ -2337,14 +2364,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         boolean eventSend;
         byte eventType = getLiTouchTypeFromEvent(event);
         if (eventType < 0) {
-            eventSend = false;
+            return false;
         }
 
         if (event.getActionMasked() == MotionEvent.ACTION_MOVE) {
             // Move events may impact all active pointers
             for (int i = 0; i < event.getPointerCount(); i++) {
                 if (!sendTouchEventForPointer(view, event, eventType, i)) {
-                    eventSend = false;
+                    return false;
                 }
             }
             eventSend = true;
@@ -2362,7 +2389,13 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         if(eventSend){
             // 触摸隐藏鼠标
-            updateLocalCursorVisibility(false, true);
+            if(localCursorView.getVisibility() == View.VISIBLE){
+                if(conn!=null){
+                    Log.d("debug", "触摸隐藏鼠标，切换远程电脑光标显示状态");
+                    sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+                }
+                localCursorView.setVisibility(View.GONE);
+            }
         }
         return eventSend;
     }
@@ -2376,82 +2409,106 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
 
         int eventSource = event.getSource();
+
 //        Log.d("debug", "eventSource: " + eventSource);
 //        Log.d("debug", "getActionMasked: " + event.getActionMasked());
-//        Log.d("debug", "event.getX(): " + (int)event.getX());
-//        Log.d("debug", "event.getY(): " + (int)event.getY());
-        // 识别原生鼠标下的滚动逻辑：一次8194鼠标滑动+五次4098屏幕滑动
-        if (eventSource == InputDevice.SOURCE_MOUSE && event.getActionMasked() == MotionEvent.ACTION_HOVER_MOVE){
-            fakeScrollInitialY = (int)event.getY();
-            fakeScrollInitialX = (int)event.getX();
+//        Log.d("debug", "event.getX(): " + event.getX());
+//        Log.d("debug", "event.getY(): " + event.getY());
+
+        // 支持华为平板识别原生鼠标下的滚动逻辑：一次8194鼠标滑动+五次4098屏幕滑动
+        if (eventSource == InputDevice.SOURCE_MOUSE && (event.getActionMasked() == MotionEvent.ACTION_HOVER_MOVE ||
+                event.getActionMasked() == MotionEvent.ACTION_MOVE ||
+                event.getActionMasked() == MotionEvent.ACTION_DOWN ||
+                event.getActionMasked() == MotionEvent.ACTION_BUTTON_PRESS)){
+            lastMouseHoverTime = android.os.SystemClock.uptimeMillis();
             detectScrolling = true;
         }
         else if (detectScrolling){
-            // =================【开始修改部分】=================
-            // 【补丁逻辑】拦截系统通过触摸屏(Source 4098)模拟的鼠标滚轮事件
-            // 特征：X轴坐标完全不变，Y轴发生位移，且通常发生在单点触控时
+            // 拦截系统通过触摸屏(Source 4098)模拟的鼠标滚轮事件
             if (eventSource == InputDevice.SOURCE_TOUCHSCREEN && event.getPointerCount() == 1) {
                 int action = event.getActionMasked();
-                if (action == MotionEvent.ACTION_DOWN) {
-                    if (fakeScrollInitialY == (int)event.getY() && fakeScrollInitialX == (int)event.getX()){
-                        fakeScrollInitialY = (int)event.getY();
-                        fakeScrollInitialX = (int)event.getX();
+                if (action == MotionEvent.ACTION_CANCEL) {
+                    waitRelease = true;
+                }
+                else if (action == MotionEvent.ACTION_DOWN) {
+                    long currentTime = android.os.SystemClock.uptimeMillis();
+                    long timeDiff = currentTime - lastMouseHoverTime;
+                    if (timeDiff <= 40 || waitRelease){
+                        fakeScrollInitialX = event.getX();
+                        fakeScrollInitialY = event.getY();
+                        // 同步发送绝对坐标给远程
+                        conn.sendMousePosition(
+                                (short)event.getX(),
+                                (short)event.getY(),
+                                (short)streamView.getWidth(),
+                                (short)streamView.getHeight()
+                        );
                         return true;
                     }
-                    else
+                    else {
+                        Log.d("debug", "timeDiff: " + timeDiff);
                         detectScrolling = false;
+                        waitRelease = false;
+                        scrollTotal = 0;
+                    }
                 }
                 else if (action == MotionEvent.ACTION_MOVE) {
-                    if (fakeScrollInitialY != -1) {
-                        int deltaX = (int)(event.getX() - fakeScrollInitialX);
-                        int deltaY = (int)(event.getY() - fakeScrollInitialY);
-                        if (deltaX == 0) {
-                            // 向上滑一次时deltaY=64，向下-64
-                            fakeScrollInitialY = (int)event.getX();
-                            fakeScrollInitialY = (int)event.getY();
-                            scrollTotal = scrollTotal + deltaY;
-                            while(scrollTotal >= 64 || scrollTotal <= -64) {
-                                if(scrollTotal >= 128){
-                                    scrollTotal = scrollTotal - 128;
-                                    conn.sendMouseHighResScroll((short) 240);
-                                }
-                                else if(scrollTotal >= 64){
-                                    scrollTotal = scrollTotal - 64;
-                                    conn.sendMouseHighResScroll((short) 120);
-                                }
-                                else if(scrollTotal <= -128){
-                                    scrollTotal = scrollTotal + 128;
-                                    conn.sendMouseHighResScroll((short) -240);
-                                }
-                                else {
-                                    scrollTotal = scrollTotal + 64;
-                                    conn.sendMouseHighResScroll((short) -120);
-                                }
-                            }
+                    float deltaY = event.getY() - fakeScrollInitialY;
+//                    Log.d("debug", "deltaY: " + deltaY);
+                    // 向上滑一次时deltaY=64，向下-64，滚动一格产生两次
+                    fakeScrollInitialX = event.getX();
+                    fakeScrollInitialY = event.getY();
+                    scrollTotal = scrollTotal + deltaY;
+                    if (scrollTotal > 127.99){
+                        scrollTotal = scrollTotal - 128;
+//                        Log.d("debug", "send: up");
+                        conn.sendMouseHighResScroll((short) 120);
+                    }
+                    else if (scrollTotal < -127.99){
+                        scrollTotal = scrollTotal + 128;
+//                        Log.d("debug", "send: down");
+                        conn.sendMouseHighResScroll((short) -120);
+                    }
 
-                            // 拦截事件，不再向下传递，避免触发点击或UI滑动
-                            return true;
+                    // 拦截事件，不再向下传递，避免触发点击或UI滑动
+                    return true;
+                }
+                else if (action == MotionEvent.ACTION_UP) {
+//                    Log.d("debug", "scrollTotal: " + scrollTotal);
+                    while(scrollTotal > 127.99 || scrollTotal < -127.99) {
+                        Log.d("debug", "滚轮还未发完");
+                        if (scrollTotal > 127.99){
+                            scrollTotal = scrollTotal - 128;
+                            Log.d("debug", "send: up");
+                            conn.sendMouseHighResScroll((short) 120);
                         }
                         else {
-                            detectScrolling = false;
+                            scrollTotal = scrollTotal + 128;
+                            Log.d("debug", "send: down");
+                            conn.sendMouseHighResScroll((short) -120);
                         }
                     }
-                }
-                else if (action == MotionEvent.ACTION_UP || action == MotionEvent.ACTION_CANCEL) {
-                    detectScrolling = false;
+                    if (!waitRelease) {
+                        detectScrolling = false;
+                    }
                     fakeScrollInitialY = -1;
                     fakeScrollInitialX = -1;
-                    // 如果刚才判定为滚轮操作，那么抬起时的 UP 事件也要消耗掉
-                    if (scrollTotal >= 64 || scrollTotal <= -64) {
-                        Log.d("debug", "handleMotionEvent: 还需滚动！");
-                        return true;
-                    }
+                    scrollTotal = 0;
+                    return true;
                 }
-                else
+                else {
                     detectScrolling = false;
+                    waitRelease = false;
+                    scrollTotal = 0;
+                }
             }
-            else
+            else if (waitRelease && eventSource == InputDevice.SOURCE_MOUSE && event.getActionMasked() == MotionEvent.ACTION_BUTTON_RELEASE) {
+                waitRelease = false;
+            }
+            else if (!waitRelease){
                 detectScrolling = false;
+                scrollTotal = 0;
+            }
         }
 
         int deviceSources = event.getDevice() != null ? event.getDevice().getSources() : 0;
@@ -2500,16 +2557,17 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 }
 
                 // Ignore mouse input if we're not capturing from our input source
-                if (!inputCaptureProvider.isCapturingEnabled()) {
+                if (!grabbedInput) {
                     // We return true here because otherwise the events may end up causing
                     // Android to synthesize d-pad events.
-//                    return true;
+                    return true;
                 }
 
                 // Always update the position before sending any button events. If we're
                 // dealing with a stylus without hover support, our position might be
                 // significantly different than before.
                 if (inputCaptureProvider.eventHasRelativeMouseAxes(event)) {
+//                    Log.d("debug", "handleMotionEvent: 处理相对位移");
                     // Send the deltas straight from the motion event
                     short deltaX = (short)inputCaptureProvider.getRelativeAxisX(event);
                     short deltaY = (short)inputCaptureProvider.getRelativeAxisY(event);
@@ -2519,7 +2577,16 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         moveLocalCursor(deltaX, deltaY);
                         if (cursorVisible) {
                             // 触控时会临时关闭鼠标绘制，移动鼠标时重新打开
-                            updateLocalCursorVisibility(true, true);
+                            if (!useAndroidCursor && localCursorView.getVisibility() == View.GONE) {
+                                localCursorView.setVisibility(View.VISIBLE);
+                                if(conn!=null){
+                                    Log.d("debug", "鼠标绘制: 移动鼠标重新打开");
+                                    Log.d("debug", "切换远程电脑光标显示状态");
+                                    sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+                                }
+                                // 确保 UI 刷新位置
+                                syncLocalCursorUi();
+                            }
                             // 提交 UI 更新
                             syncLocalCursorUi();
                             // 同步发送绝对坐标给远程
@@ -2543,6 +2610,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     }
                 }
                 else if ((eventSource & InputDevice.SOURCE_CLASS_POSITION) != 0) {
+//                    Log.d("debug", "handleMotionEvent: 处理绝对位置的触控板");
                     // If this input device is not associated with the view itself (like a trackpad),
                     // we'll convert the device-specific coordinates to use to send the cursor position.
                     // This really isn't ideal but it's probably better than nothing.
@@ -2569,21 +2637,25 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     }
                 }
                 else if (view != null && trySendPenEvent(view, event)) {
+//                    Log.d("debug", "handleMotionEvent: 处理手写笔");
                     // If our host supports pen events, send it directly
                     return true;
                 }
                 else if (view != null) {
+//                    Log.d("debug", "handleMotionEvent: 处理绝对位置SOURCE_CLASS_POINTER");
                     // Otherwise send absolute position based on the view for SOURCE_CLASS_POINTER
                     updateMousePosition(view, event);
                 }
 
                 if (event.getActionMasked() == MotionEvent.ACTION_SCROLL) {
+//                    Log.d("debug", "handleMotionEvent: 处理滚动");
                     // Send the vertical scroll packet
                     conn.sendMouseHighResScroll((short)(event.getAxisValue(MotionEvent.AXIS_VSCROLL) * 120));
                     conn.sendMouseHighResHScroll((short)(event.getAxisValue(MotionEvent.AXIS_HSCROLL) * 120));
                 }
 
                 if ((changedButtons & MotionEvent.BUTTON_PRIMARY) != 0) {
+//                    Log.d("debug", "handleMotionEvent: BUTTON_PRIMARY");
                     if ((buttonState & MotionEvent.BUTTON_PRIMARY) != 0) {
                         conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT);
                     }
@@ -2594,6 +2666,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                 // Mouse secondary or stylus primary is right click (stylus down is left click)
                 if ((changedButtons & (MotionEvent.BUTTON_SECONDARY | MotionEvent.BUTTON_STYLUS_PRIMARY)) != 0) {
+//                    Log.d("debug", "handleMotionEvent: BUTTON_SECONDARY");
                     if ((buttonState & (MotionEvent.BUTTON_SECONDARY | MotionEvent.BUTTON_STYLUS_PRIMARY)) != 0) {
                         conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT);
                     }
@@ -2604,6 +2677,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                 // Mouse tertiary or stylus secondary is middle click
                 if ((changedButtons & (MotionEvent.BUTTON_TERTIARY | MotionEvent.BUTTON_STYLUS_SECONDARY)) != 0) {
+//                    Log.d("debug", "handleMotionEvent: middle click");
                     if ((buttonState & (MotionEvent.BUTTON_TERTIARY | MotionEvent.BUTTON_STYLUS_SECONDARY)) != 0) {
                         conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_MIDDLE);
                     }
@@ -2613,6 +2687,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 }
 
                 if (prefConfig.mouseNavButtons) {
+//                    Log.d("debug", "handleMotionEvent: mouseNavButtons");
                     if ((changedButtons & MotionEvent.BUTTON_BACK) != 0) {
                         if ((buttonState & MotionEvent.BUTTON_BACK) != 0) {
                             conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_X1);
@@ -2634,6 +2709,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                 // Handle stylus presses
                 if (event.getPointerCount() == 1 && event.getActionIndex() == 0) {
+//                    Log.d("debug", "handleMotionEvent: stylus presses");
                     if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
                         if (event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
                             lastAbsTouchDownTime = event.getEventTime();
@@ -2675,6 +2751,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             // This case is for fingers
             else
             {
+//                Log.d("debug", "handleMotionEvent: finger");
                 if (virtualController != null &&
                         (virtualController.getControllerMode() == VirtualController.ControllerMode.MoveButtons ||
                          virtualController.getControllerMode() == VirtualController.ControllerMode.ResizeButtons||
@@ -3186,12 +3263,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 // is too early to capture. We will delay a second to allow
                 // the spinner to dismiss before capturing.
                 Handler h = new Handler();
-                h.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        setInputGrabState(true);
-                    }
-                }, 500);
+                h.postDelayed(() -> setInputGrabState(true), 500);
 
                 // Keep the display on
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -3511,22 +3583,27 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     // 更新本地软件光标的显示/隐藏状态
     public void updateLocalCursorVisibility(boolean hasCompatibleDevice, boolean updateRemoteCursor) {
-        if (cursorVisible && hasCompatibleDevice && localCursorView.getVisibility() == View.GONE) {
+        if (!useAndroidCursor && cursorVisible && hasCompatibleDevice && localCursorView.getVisibility() == View.GONE) {
             localCursorView.setVisibility(View.VISIBLE);
             if(conn!=null){
-                Log.d("debug", "鼠标绘制: 隐藏-》显示，电脑端切换显示：" + updateRemoteCursor);
+                Log.d("debug", "鼠标绘制: 隐藏-》显示");
                 // 发送快捷键切换电脑光标显示状态
-                if(updateRemoteCursor)
+                if (updateRemoteCursor){
+                    Log.d("debug", "切换远程电脑光标显示状态");
                     sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+                }
+
             }
             // 确保 UI 刷新位置
             syncLocalCursorUi();
         } else if((!cursorVisible || !hasCompatibleDevice) && localCursorView.getVisibility() == View.VISIBLE){
             if(conn!=null){
-                Log.d("debug", "鼠标绘制: 显示-》隐藏，电脑端切换显示：" + updateRemoteCursor);
+                Log.d("debug", "鼠标绘制: 显示-》隐藏");
                 // 发送快捷键切换电脑光标显示状态
-                if(updateRemoteCursor)
+                if (updateRemoteCursor){
+                    Log.d("debug", "切换远程电脑光标显示状态");
                     sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+                }
             }
             localCursorView.setVisibility(View.GONE);
         }
@@ -3577,6 +3654,20 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             grabbedInput = true;
         }
         cursorVisible = !cursorVisible;
+
+        if (inputCaptureProvider.isCapturingEnabled()){
+            Log.d("debug", "切换为本地鼠标模式");
+            useAndroidCursor = true;
+            inputCaptureProvider.disableCapture();
+        }
+        else {
+            Log.d("debug", "切换为远程鼠标模式");
+            useAndroidCursor = false;
+            inputCaptureProvider.enableCapture();
+        }
+        updateLocalCursorVisibility(inputCaptureProvider.isCapturingActive(), false);
+        Log.d("debug", "切换远程电脑光标显示状态");
+        sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
     }
 
     public void switchMouseModel(int which){

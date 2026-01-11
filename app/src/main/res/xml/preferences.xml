@@ -185,7 +185,7 @@
         <CheckBoxPreference
             android:key="checkbox_mouse_local_cursor"
             android:title="使用本地鼠标光标"
-            android:summary="外接物理鼠标的光标被捕获后无法显示原生光标，此选项可绘制光标以减小延迟（开启后将自动开关电脑端鼠标显示）"
+            android:summary="默认外接物理鼠标的光标会被捕获，此选项可显示安卓系统光标"
             android:defaultValue="false" />
 
 <!--        <CheckBoxPreference-->
