@@ -5,6 +5,7 @@ import android.app.Activity;
 import android.hardware.input.InputManager;
 import android.os.Build;
 import android.os.Handler;
+import android.util.Log;
 import android.view.InputDevice;
 import android.view.MotionEvent;
 import android.view.View;
@@ -17,6 +18,7 @@ import android.view.View;
 public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptureProvider implements InputManager.InputDeviceListener {
     private final InputManager inputManager;
     private final View targetView;
+    private boolean haveDevice = false;
 
     public AndroidNativePointerCaptureProvider(Activity activity, View targetView) {
         super(activity, targetView);
@@ -38,6 +40,10 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
             if (device == null) {
                 continue;
             }
+
+            // 触控笔可能被识别为鼠标设备
+            if (device.getName().contains("Pencil") || device.getName().contains("pencil"))
+                continue;
 
             // Skip touchscreens when considering compatible capture devices.
             // Samsung devices on Android 12 will report a sec_touchpad device
@@ -61,20 +67,23 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
         return false;
     }
 
-    @Override
-    public void showCursor() {
-        super.showCursor();
+    public interface OnCaptureDeviceStatusListener {
+        void onDeviceStatusChanged(boolean hasCompatibleDevice);
+    }
 
-        // It is important to unregister the listener *before* releasing pointer capture,
-        // because releasing pointer capture can cause an onInputDeviceChanged() callback
-        // for devices with a touchpad (like a DS4 controller).
-        inputManager.unregisterInputDeviceListener(this);
-        targetView.releasePointerCapture();
+    private OnCaptureDeviceStatusListener statusListener;
+
+    public void setOnCaptureDeviceStatusListener(OnCaptureDeviceStatusListener listener) {
+        this.statusListener = listener;
+    }
+
+    public boolean isCapturingActive() {
+        return haveDevice;
     }
 
     @Override
-    public void hideCursor() {
-        super.hideCursor();
+    public void enableCapture() {
+        super.enableCapture();
 
         // Listen for device events to enable/disable capture
         inputManager.registerInputDeviceListener(this, null);
@@ -82,7 +91,27 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
         // Capture now if we have a capture-capable device
         if (hasCaptureCompatibleInputDevice()) {
             targetView.requestPointerCapture();
+            haveDevice = true;
+            // 通知外部：添加了外部设备
+            if (statusListener != null) {
+//                Log.d("debug", "enableCapture: ");
+                statusListener.onDeviceStatusChanged(true);
+            }
         }
+        else
+            haveDevice = false;
+    }
+
+    @Override
+    public void disableCapture() {
+        super.disableCapture();
+
+        // It is important to unregister the listener *before* releasing pointer capture,
+        // because releasing pointer capture can cause an onInputDeviceChanged() callback
+        // for devices with a touchpad (like a DS4 controller).
+        inputManager.unregisterInputDeviceListener(this);
+        targetView.releasePointerCapture();
+        haveDevice = false;
     }
 
     @Override
@@ -90,7 +119,10 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
         // NB: We have to check cursor visibility here because Android pointer capture
         // doesn't support capturing the cursor while it's visible. Enabling pointer
         // capture implicitly hides the cursor.
-        if (!focusActive || !isCapturing || isCursorVisible) {
+//        if (!focusActive || !isCapturing || isCursorVisible) {
+//            return;
+//        }
+        if (!focusActive || !isCapturing) {
             return;
         }
 
@@ -99,13 +131,18 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
         // we'll hit the "requestPointerCapture called for a window that has no focus"
         // error and it will not actually capture the cursor.
         Handler h = new Handler();
-        h.postDelayed(new Runnable() {
-            @Override
-            public void run() {
-                if (hasCaptureCompatibleInputDevice()) {
-                    targetView.requestPointerCapture();
+        h.postDelayed(() -> {
+            if (hasCaptureCompatibleInputDevice()) {
+                targetView.requestPointerCapture();
+                haveDevice = true;
+                // 通知外部：添加了外部设备
+                if (statusListener != null) {
+//                    Log.d("debug", "onWindowFocusChanged: ");
+                    statusListener.onDeviceStatusChanged(true);
                 }
             }
+            else
+                haveDevice = false;
         }, 500);
     }
 
@@ -145,7 +182,13 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
     public void onInputDeviceAdded(int deviceId) {
         // Check if we've added a capture-compatible device
         if (!targetView.hasPointerCapture() && hasCaptureCompatibleInputDevice()) {
+//            Log.d("debug", "onCompatibleInputDeviceAdded: ");
             targetView.requestPointerCapture();
+            haveDevice = true;
+            // 通知外部：添加了外部设备
+            if (statusListener != null) {
+                statusListener.onDeviceStatusChanged(true);
+            }
         }
     }
 
@@ -153,7 +196,13 @@ public class AndroidNativePointerCaptureProvider extends AndroidPointerIconCaptu
     public void onInputDeviceRemoved(int deviceId) {
         // Check if the capture-compatible device was removed
         if (targetView.hasPointerCapture() && !hasCaptureCompatibleInputDevice()) {
+//            Log.d("debug", "onCompatibleInputDeviceRemoved: ");
             targetView.releasePointerCapture();
+            haveDevice = false;
+            // 通知外部：移除了外部设备
+            if (statusListener != null) {
+                statusListener.onDeviceStatusChanged(false);
+            }
         }
     }
 

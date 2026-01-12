@@ -1,11 +1,14 @@
 package com.limelight;
 
 
+import static com.limelight.ui.gamemenu.GameMenuFragment.sendKeys;
+
 import com.limelight.binding.PlatformBinding;
 import com.limelight.binding.audio.AndroidAudioRenderer;
 import com.limelight.binding.input.ControllerHandler;
 import com.limelight.binding.input.GameInputDevice;
 import com.limelight.binding.input.KeyboardTranslator;
+import com.limelight.binding.input.capture.AndroidNativePointerCaptureProvider;
 import com.limelight.binding.input.capture.InputCaptureManager;
 import com.limelight.binding.input.capture.InputCaptureProvider;
 import com.limelight.binding.input.touch.AbsoluteTouchContext;
@@ -60,6 +63,7 @@ import android.content.SharedPreferences;
 import android.content.pm.ActivityInfo;
 import android.content.pm.PackageManager;
 import android.content.res.Configuration;
+import android.graphics.Matrix;
 import android.graphics.Outline;
 import android.graphics.Point;
 import android.graphics.Rect;
@@ -74,7 +78,10 @@ import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.IBinder;
+import android.os.Looper;
 import android.preference.PreferenceManager;
+import android.provider.Settings;
+import android.util.Log;
 import android.util.Rational;
 import android.util.TypedValue;
 import android.view.Display;
@@ -96,6 +103,7 @@ import android.view.Window;
 import android.view.WindowManager;
 import android.widget.FrameLayout;
 import android.view.inputmethod.InputMethodManager;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
 import android.widget.TextView;
 import android.widget.Toast;
@@ -108,8 +116,10 @@ import java.security.cert.CertificateFactory;
 import java.security.cert.X509Certificate;
 import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 
 public class Game extends Activity implements SurfaceHolder.Callback,
@@ -134,6 +144,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private static final int STYLUS_UP_DEAD_ZONE_RADIUS = 50;
 
     private static final int THREE_FINGER_TAP_THRESHOLD = 300;
+
+    private int maxPointerCount = 0;
 
     private ControllerHandler controllerHandler;
     private KeyboardTranslator keyboardTranslator;
@@ -160,10 +172,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private NvApp app;
     private float desiredRefreshRate;
 
-    private InputCaptureProvider inputCaptureProvider;
+    private AndroidNativePointerCaptureProvider inputCaptureProvider;
     private int modifierFlags = 0;
     private boolean grabbedInput = true;
-    private boolean cursorVisible = false;
+    private boolean useAndroidCursor = true;
+    private boolean cursorDraw = false;
     private boolean waitingForAllModifiersUp = false;
     private int specialKeyCode = KeyEvent.KEYCODE_UNKNOWN;
     private StreamView streamView;
@@ -222,10 +235,43 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     private TextView performanceRumble;
 
+    private ImageView localCursorView;
+    private float localCursorX = 0;
+    private float localCursorY = 0;
+    private Matrix cursorMatrix = new Matrix();
+    private float fakeScrollInitialY = -1;
+    private float scrollTotal = 0;
+    private long lastMouseHoverTime = 0; // 记录最后一次鼠标活跃的时间
+    private boolean waitRelease = false;
+    private boolean detectScrolling = false;
+
     @SuppressLint("MissingInflatedId")
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+
+        //自动获取无障碍权限
+        try {
+            ComponentName cn = new ComponentName(this, KeyboardAccessibilityService.class);
+            String myService = cn.flattenToString();
+            String enabledServices = Settings.Secure.getString(getContentResolver(),
+                    Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES);
+
+            if (enabledServices == null || !enabledServices.contains(myService)) {
+                if (enabledServices == null || enabledServices.isEmpty()) {
+                    enabledServices = myService;
+                } else {
+                    enabledServices += ":" + myService;
+                }
+
+                // 这里可能会抛异常
+                Settings.Secure.putString(getContentResolver(),
+                        Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES, enabledServices);
+            }
+        } catch (SecurityException e) {
+            // 没无障碍权限
+        }
+
 
         instance=this;
 
@@ -288,8 +334,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         performanceRumble=findViewById(R.id.performanceRumble);
         switchPerformanceRumbleHUD();
-        //光标是否显示
-        cursorVisible=prefConfig.enableMouseLocalCursor;
+        //启用本地鼠标模式
+        useAndroidCursor = prefConfig.enableMouseLocalCursor;
+        cursorDraw = prefConfig.enableMouseDraw;
 
 //        //串流画面 顶部居中显示
 //        if(prefConfig.enableDisplayTopCenter){
@@ -357,7 +404,16 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         performanceOverlayBig = findViewById(R.id.performanceOverlayBig);
 
-        inputCaptureProvider = InputCaptureManager.getInputCaptureProvider(this, this);
+        localCursorView = findViewById(R.id.localCursorView);
+
+        inputCaptureProvider = new AndroidNativePointerCaptureProvider(this, streamView);
+        inputCaptureProvider.setOnCaptureDeviceStatusListener(hasCompatibleDevice -> {
+            updateLocalCursorVisibility(hasCompatibleDevice);
+            if(conn!=null && !useAndroidCursor && cursorDraw){
+                Log.d("debug", "setOnCaptureDeviceStatusListener：切换远程电脑光标显示状态");
+                sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+            }
+        });
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             streamView.setOnCapturedPointerListener(new View.OnCapturedPointerListener() {
@@ -1291,6 +1347,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     protected void onPause() {
+        if(conn!=null && (useAndroidCursor || cursorDraw)){
+            // 发送快捷键切换电脑光标显示状态
+            Log.d("debug", "onPause：切换远程电脑光标显示状态");
+            sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+        }
+
         if (isFinishing()) {
             // Stop any further input device notifications before we lose focus (and pointer capture)
             if (controllerHandler != null) {
@@ -1426,8 +1488,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
             // Enabling capture may hide the cursor again, so
             // we will need to show it again.
-            if (cursorVisible) {
-                inputCaptureProvider.showCursor();
+            if (useAndroidCursor) {
+                Handler h = new Handler();
+                h.postDelayed(() -> {
+                    // 切换为原生光标
+                    Log.d("debug", "开启原生光标模式，切换远程电脑光标显示状态");
+                    sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+                    inputCaptureProvider.disableCapture();
+                }, 500);
             }
         }
         else {
@@ -1494,6 +1562,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 switch (specialKeyCode) {
                     // Toggle input grab
                     case KeyEvent.KEYCODE_Z:
+                        Toast.makeText(this, "Toggle input grab", Toast.LENGTH_SHORT).show();
                         Handler h = getWindow().getDecorView().getHandler();
                         if (h != null) {
                             h.postDelayed(toggleGrab, 250);
@@ -1505,17 +1574,28 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         finish();
                         break;
 
-                    // Toggle cursor visibility
+                    // Toggle local cursor mode
                     case KeyEvent.KEYCODE_C:
-                        if (!grabbedInput) {
-                            inputCaptureProvider.enableCapture();
-                            grabbedInput = true;
+                        switchMouseLocalCursor();
+                        break;
+
+                    // 切换光标显示方案：绘制/远程
+                    case KeyEvent.KEYCODE_V:
+
+                        if (inputCaptureProvider.isCapturingEnabled()) {
+                            cursorDraw = !cursorDraw;
+                            if (cursorDraw)
+                                Toast.makeText(this, "切换为远程鼠标模式：绘制", Toast.LENGTH_SHORT).show();
+                            else
+                                Toast.makeText(this, "切换为远程鼠标模式：普通", Toast.LENGTH_SHORT).show();
+
+                            Log.d("debug", "KeyEvent.KEYCODE_V: 切换远程电脑光标显示状态");
+                            sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+
+                            updateLocalCursorVisibility(inputCaptureProvider.isCapturingActive());
                         }
-                        cursorVisible = !cursorVisible;
-                        if (cursorVisible) {
-                            inputCaptureProvider.showCursor();
-                        } else {
-                            inputCaptureProvider.hideCursor();
+                        else {
+                            Toast.makeText(this, "本地模式只能使用原生鼠标", Toast.LENGTH_SHORT).show();
                         }
                         break;
 
@@ -1536,6 +1616,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 case KeyEvent.KEYCODE_Z:
                 case KeyEvent.KEYCODE_Q:
                 case KeyEvent.KEYCODE_C:
+                case KeyEvent.KEYCODE_V:
                     // Remember that a special key combo was activated, so we can consume all key
                     // events until the modifiers come up
                     specialKeyCode = androidKeyCode;
@@ -1584,8 +1665,83 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         return handleKeyDown(event) || super.onKeyDown(keyCode, event);
     }
 
+    private final Set<Integer> pressedKeys = new HashSet<>();
+    // 0代表未按下，1代表按下esc，2代表按下自定义组合键
+    private int escState = 0; // 0 = 空闲，1 = ESC已按下，2 = 已进入组合键
+    private Handler handler = new Handler(Looper.getMainLooper());
+    private Runnable escConfirmRunnable;
     @Override
     public boolean handleKeyDown(KeyEvent event) {
+        // 自定义组合键，只能其它+esc，esc+其它时，esc抬起时其它才会down
+        int keyCode = event.getKeyCode();
+        pressedKeys.add(keyCode);
+        if (prefConfig.enableCustomKeyMap) {
+            if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                escState = 1;
+//            Log.d("debug", "Esc: Down");
+                // 启动延迟判断是否是单独的ESC键
+                escConfirmRunnable = () -> {
+                    if (escState == 1) {
+//                    Log.d("debug", "Esc: Confirmed as Single");
+                        short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
+                        conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                        escState = 0;
+                    }
+                };
+                handler.postDelayed(escConfirmRunnable, 200); // 延迟判断
+                return true;
+            }
+
+            if (escState == 1) {
+                // 若在ESC后检测到自定义键按下，取消ESC单键判断
+                handler.removeCallbacks(escConfirmRunnable);
+
+                if (keyCode == KeyEvent.KEYCODE_Q) {
+//                Log.d("debug", "Esc + Q: Down");
+                    escState = 2;
+                    return true;
+                }
+                else if (keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_9) {
+//                Log.d("debug", "Esc + num: Down");
+                    escState = 2;
+                    int fKeyCode = KeyEvent.KEYCODE_F1 + (keyCode - KeyEvent.KEYCODE_1);
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                else if (keyCode == KeyEvent.KEYCODE_0) {
+//                Log.d("debug", "Esc + 0: Down -> F10");
+                    escState = 2;
+                    int fKeyCode = KeyEvent.KEYCODE_F10;
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                else if (keyCode == KeyEvent.KEYCODE_MINUS) {
+//                Log.d("debug", "Esc + -: Down -> F11");
+                    escState = 2;
+                    int fKeyCode = KeyEvent.KEYCODE_F11;
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                else if (keyCode == KeyEvent.KEYCODE_EQUALS) {
+//                Log.d("debug", "Esc + =: Down -> F12");
+                    escState = 2;
+                    int fKeyCode = KeyEvent.KEYCODE_F12;
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                else{
+                    // 非自定义组合键，不做处理
+                    short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    escState = 0;
+                }
+            }
+        }
+
         // Pass-through virtual navigation keys
         if ((event.getFlags() & KeyEvent.FLAG_VIRTUAL_HARD_KEY) != 0) {
             return false;
@@ -1608,6 +1764,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
             // Always return true, otherwise the back press will be propagated
             // up to the parent and finish the activity.
+            return true;
+        }
+
+        // 鼠标中键（同时影响触摸返回）
+        if (prefConfig.enableMouseMiddle && eventSource == InputDevice.SOURCE_KEYBOARD &&
+                event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+//            Log.d("debug", "handleKeyDown: " + event.getKeyCode());
+            conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_MIDDLE);
             return true;
         }
 
@@ -1668,6 +1832,75 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     public boolean handleKeyUp(KeyEvent event) {
+//        Log.d("debug", "KeyUpGetKeyCode: " + event.getKeyCode());
+        int keyCode = event.getKeyCode();
+        pressedKeys.remove(keyCode);
+
+        if (prefConfig.enableCustomKeyMap) {
+            if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                handler.removeCallbacks(escConfirmRunnable); // 若未执行则移除
+                if (escState == 1) {
+                    // 没有组合键，短时间内抬起
+//                Log.d("debug", "Esc: Up (no combo)");
+                    short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    // 延迟发送 KEY_UP，不堵塞主线程
+                    handler.postDelayed(() -> {
+                        conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    }, 50); // 延迟 50ms
+                    escState = 0;
+                } else if (escState == 2) {
+                    // 组合键已触发，不处理ESC
+//                Log.d("debug", "Esc: Up (combo)");
+                    escState = 0;
+                }else{
+//                Log.d("debug", "Esc: Up (no custom combo)");
+                    short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    escState = 0;
+                }
+
+                return true;
+            }
+            if(escState == 2){
+                if (keyCode == KeyEvent.KEYCODE_Q) {
+//                Log.d("debug", "Esc + Q: Up");
+                    if (prefConfig.enableQtDialog) {
+                        showGameMenu(null);
+                    }
+                    return true;
+                }
+                if (keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_9) {
+//                Log.d("debug", "Esc + num: Up");
+                    int fKeyCode = KeyEvent.KEYCODE_F1 + (keyCode - KeyEvent.KEYCODE_1);
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                if (keyCode == KeyEvent.KEYCODE_0) {
+//                Log.d("debug", "Esc + 0: Up -> F10");
+                    int fKeyCode = KeyEvent.KEYCODE_F10;
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                if (keyCode == KeyEvent.KEYCODE_MINUS) {
+//                Log.d("debug", "Esc + -: Up -> F11");
+                    int fKeyCode = KeyEvent.KEYCODE_F11;
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                if (keyCode == KeyEvent.KEYCODE_EQUALS) {
+//                Log.d("debug", "Esc + =: Up -> F12");
+                    int fKeyCode = KeyEvent.KEYCODE_F12;
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+            }
+        }
+
         // Pass-through virtual navigation keys
         if ((event.getFlags() & KeyEvent.FLAG_VIRTUAL_HARD_KEY) != 0) {
             return false;
@@ -1676,6 +1909,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // Handle a synthetic back button event that some Android OS versions
         // create as a result of a right-click.
         int eventSource = event.getSource();
+//        Log.d("debug", "eventSource: " + event.getSource());
         if ((eventSource == InputDevice.SOURCE_MOUSE ||
                 eventSource == InputDevice.SOURCE_MOUSE_RELATIVE) &&
                 event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
@@ -1689,6 +1923,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
             // Always return true, otherwise the back press will be propagated
             // up to the parent and finish the activity.
+            return true;
+        }
+
+        // 鼠标中键（同时影响触摸返回）
+        if (prefConfig.enableMouseMiddle && eventSource == InputDevice.SOURCE_KEYBOARD &&
+                event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+//            Log.d("debug", "handleKeyUp: " + event.getKeyCode());
+            conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_MIDDLE);
             return true;
         }
 
@@ -2047,6 +2289,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     private boolean trySendPenEvent(View view, MotionEvent event) {
+        boolean eventSend;
         byte eventType = getLiTouchTypeFromEvent(event);
         if (eventType < 0) {
             return false;
@@ -2071,11 +2314,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     return false;
                 }
             }
-            return handledStylusEvent;
+            eventSend = handledStylusEvent;
         }
         else if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
             // Cancel impacts all active pointers
-            return conn.sendPenEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, MoonBridge.LI_TOOL_TYPE_UNKNOWN, (byte)0,
+            eventSend = conn.sendPenEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, MoonBridge.LI_TOOL_TYPE_UNKNOWN, (byte)0,
                     0, 0, 0, 0, 0,
                     MoonBridge.LI_ROT_UNKNOWN, MoonBridge.LI_TILT_UNKNOWN) != MoonBridge.LI_ERR_UNSUPPORTED;
         }
@@ -2086,8 +2329,13 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 // Not a stylus event
                 return false;
             }
-            return sendPenEventForPointer(view, event, eventType, toolType, event.getActionIndex());
+            eventSend = sendPenEventForPointer(view, event, eventType, toolType, event.getActionIndex());
         }
+
+        // 触控事件，隐藏绘制
+        if (eventSend && cursorDraw && localCursorView.getVisibility() == View.VISIBLE)
+            localCursorView.setVisibility(View.GONE);
+        return eventSend;
     }
 
     private boolean sendTouchEventForPointer(View view, MotionEvent event, byte eventType, int pointerIndex) {
@@ -2101,6 +2349,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     private boolean trySendTouchEvent(View view, MotionEvent event) {
+        boolean eventSend;
         byte eventType = getLiTouchTypeFromEvent(event);
         if (eventType < 0) {
             return false;
@@ -2113,18 +2362,23 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     return false;
                 }
             }
-            return true;
+            eventSend = true;
         }
         else if (event.getActionMasked() == MotionEvent.ACTION_CANCEL) {
             // Cancel impacts all active pointers
-            return conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0,
+            eventSend = conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0,
                     0, 0, 0, 0, 0,
                     MoonBridge.LI_ROT_UNKNOWN) != MoonBridge.LI_ERR_UNSUPPORTED;
         }
         else {
             // Up, Down, and Hover events are specific to the action index
-            return sendTouchEventForPointer(view, event, eventType, event.getActionIndex());
+            eventSend = sendTouchEventForPointer(view, event, eventType, event.getActionIndex());
         }
+
+        // 触控笔事件，隐藏绘制
+        if (eventSend && cursorDraw && localCursorView.getVisibility() == View.VISIBLE)
+            localCursorView.setVisibility(View.GONE);
+        return eventSend;
     }
 
     // Returns true if the event was consumed
@@ -2134,7 +2388,107 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         if (!grabbedInput) {
             return false;
         }
+
         int eventSource = event.getSource();
+
+//        Log.d("debug", "eventSource: " + eventSource);
+//        Log.d("debug", "getActionMasked: " + event.getActionMasked());
+//        Log.d("debug", "event.getX(): " + event.getX());
+//        Log.d("debug", "event.getY(): " + event.getY());
+
+        // 支持华为平板识别原生鼠标下的滚动逻辑：一次8194鼠标滑动+五次4098屏幕滑动
+        if (eventSource == InputDevice.SOURCE_MOUSE && (event.getActionMasked() == MotionEvent.ACTION_HOVER_MOVE ||
+                event.getActionMasked() == MotionEvent.ACTION_MOVE ||
+                event.getActionMasked() == MotionEvent.ACTION_DOWN ||
+                event.getActionMasked() == MotionEvent.ACTION_BUTTON_PRESS)){
+            lastMouseHoverTime = android.os.SystemClock.uptimeMillis();
+            detectScrolling = true;
+        }
+        else if (detectScrolling){
+            // 拦截系统通过触摸屏(Source 4098)模拟的鼠标滚轮事件
+            if (eventSource == InputDevice.SOURCE_TOUCHSCREEN && event.getPointerCount() == 1) {
+                int action = event.getActionMasked();
+                if (action == MotionEvent.ACTION_CANCEL) {
+                    waitRelease = true;
+                }
+                else if (action == MotionEvent.ACTION_DOWN) {
+                    long currentTime = android.os.SystemClock.uptimeMillis();
+                    long timeDiff = currentTime - lastMouseHoverTime;
+                    if (timeDiff <= 40 || waitRelease){
+                        fakeScrollInitialY = event.getY();
+                        // 同步发送绝对坐标给远程
+                        conn.sendMousePosition(
+                                (short)event.getX(),
+                                (short)event.getY(),
+                                (short)streamView.getWidth(),
+                                (short)streamView.getHeight()
+                        );
+                        return true;
+                    }
+                    else {
+                        Log.d("debug", "timeDiff: " + timeDiff);
+                        detectScrolling = false;
+                        waitRelease = false;
+                        scrollTotal = 0;
+                    }
+                }
+                else if (action == MotionEvent.ACTION_MOVE) {
+                    float deltaY = event.getY() - fakeScrollInitialY;
+//                    Log.d("debug", "deltaY: " + deltaY);
+                    // 向上滑一次时deltaY=64，向下-64，滚动一格产生两次
+                    fakeScrollInitialY = event.getY();
+                    scrollTotal = scrollTotal + deltaY;
+                    if (scrollTotal > 127.99){
+                        scrollTotal = scrollTotal - 128;
+//                        Log.d("debug", "send: up");
+                        conn.sendMouseHighResScroll((short) 120);
+                    }
+                    else if (scrollTotal < -127.99){
+                        scrollTotal = scrollTotal + 128;
+//                        Log.d("debug", "send: down");
+                        conn.sendMouseHighResScroll((short) -120);
+                    }
+
+                    // 拦截事件，不再向下传递，避免触发点击或UI滑动
+                    return true;
+                }
+                else if (action == MotionEvent.ACTION_UP) {
+//                    Log.d("debug", "scrollTotal: " + scrollTotal);
+                    while(scrollTotal > 127.99 || scrollTotal < -127.99) {
+                        Log.d("debug", "滚轮还未发完");
+                        if (scrollTotal > 127.99){
+                            scrollTotal = scrollTotal - 128;
+                            Log.d("debug", "send: up");
+                            conn.sendMouseHighResScroll((short) 120);
+                        }
+                        else {
+                            scrollTotal = scrollTotal + 128;
+                            Log.d("debug", "send: down");
+                            conn.sendMouseHighResScroll((short) -120);
+                        }
+                    }
+                    if (!waitRelease) {
+                        detectScrolling = false;
+                    }
+                    fakeScrollInitialY = -1;
+                    scrollTotal = 0;
+                    return true;
+                }
+                else {
+                    detectScrolling = false;
+                    waitRelease = false;
+                    scrollTotal = 0;
+                }
+            }
+            else if (waitRelease && eventSource == InputDevice.SOURCE_MOUSE && event.getActionMasked() == MotionEvent.ACTION_BUTTON_RELEASE) {
+                waitRelease = false;
+            }
+            else if (!waitRelease){
+                detectScrolling = false;
+                scrollTotal = 0;
+            }
+        }
+
         int deviceSources = event.getDevice() != null ? event.getDevice().getSources() : 0;
         if ((eventSource & InputDevice.SOURCE_CLASS_JOYSTICK) != 0) {
             if (controllerHandler.handleMotionEvent(event)) {
@@ -2181,7 +2535,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 }
 
                 // Ignore mouse input if we're not capturing from our input source
-                if (!inputCaptureProvider.isCapturingActive()) {
+                if (!grabbedInput) {
                     // We return true here because otherwise the events may end up causing
                     // Android to synthesize d-pad events.
                     return true;
@@ -2191,22 +2545,37 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 // dealing with a stylus without hover support, our position might be
                 // significantly different than before.
                 if (inputCaptureProvider.eventHasRelativeMouseAxes(event)) {
+//                    Log.d("debug", "handleMotionEvent: 处理相对位移");
                     // Send the deltas straight from the motion event
                     short deltaX = (short)inputCaptureProvider.getRelativeAxisX(event);
                     short deltaY = (short)inputCaptureProvider.getRelativeAxisY(event);
 
                     if (deltaX != 0 || deltaY != 0) {
-                        if (prefConfig.absoluteMouseMode) {
-                            // NB: view may be null, but we can unconditionally use streamView because we don't need to adjust
-                            // relative axis deltas for the position of the streamView within the parent's coordinate system.
-                            conn.sendMouseMoveAsMousePosition(deltaX, deltaY, (short)streamView.getWidth(), (short)streamView.getHeight());
+                        // 计算光标绝对位置
+                        moveLocalCursor(deltaX, deltaY);
+                        if (cursorDraw) {
+                            if (localCursorView.getVisibility() == View.GONE)
+                                localCursorView.setVisibility(View.VISIBLE);
+                            // 提交 UI 更新
+                            syncLocalCursorUi();
+
+                            // 同步发送绝对坐标给远程
+                            conn.sendMousePosition((short)localCursorX, (short)localCursorY, (short)streamView.getWidth(), (short)streamView.getHeight());
                         }
                         else {
-                            conn.sendMouseMove(deltaX, deltaY);
+                            if (prefConfig.absoluteMouseMode) {
+                                // NB: view may be null, but we can unconditionally use streamView because we don't need to adjust
+                                // relative axis deltas for the position of the streamView within the parent's coordinate system.
+                                conn.sendMouseMoveAsMousePosition(deltaX, deltaY, (short)streamView.getWidth(), (short)streamView.getHeight());
+                            }
+                            else {
+                                conn.sendMouseMove(deltaX, deltaY);
+                            }
                         }
                     }
                 }
                 else if ((eventSource & InputDevice.SOURCE_CLASS_POSITION) != 0) {
+//                    Log.d("debug", "handleMotionEvent: 处理绝对位置的触控板");
                     // If this input device is not associated with the view itself (like a trackpad),
                     // we'll convert the device-specific coordinates to use to send the cursor position.
                     // This really isn't ideal but it's probably better than nothing.
@@ -2233,21 +2602,25 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     }
                 }
                 else if (view != null && trySendPenEvent(view, event)) {
+//                    Log.d("debug", "handleMotionEvent: 处理手写笔");
                     // If our host supports pen events, send it directly
                     return true;
                 }
                 else if (view != null) {
+//                    Log.d("debug", "handleMotionEvent: 处理绝对位置SOURCE_CLASS_POINTER");
                     // Otherwise send absolute position based on the view for SOURCE_CLASS_POINTER
                     updateMousePosition(view, event);
                 }
 
                 if (event.getActionMasked() == MotionEvent.ACTION_SCROLL) {
+//                    Log.d("debug", "handleMotionEvent: 处理滚动");
                     // Send the vertical scroll packet
                     conn.sendMouseHighResScroll((short)(event.getAxisValue(MotionEvent.AXIS_VSCROLL) * 120));
                     conn.sendMouseHighResHScroll((short)(event.getAxisValue(MotionEvent.AXIS_HSCROLL) * 120));
                 }
 
                 if ((changedButtons & MotionEvent.BUTTON_PRIMARY) != 0) {
+//                    Log.d("debug", "handleMotionEvent: BUTTON_PRIMARY");
                     if ((buttonState & MotionEvent.BUTTON_PRIMARY) != 0) {
                         conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_LEFT);
                     }
@@ -2258,6 +2631,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                 // Mouse secondary or stylus primary is right click (stylus down is left click)
                 if ((changedButtons & (MotionEvent.BUTTON_SECONDARY | MotionEvent.BUTTON_STYLUS_PRIMARY)) != 0) {
+//                    Log.d("debug", "handleMotionEvent: BUTTON_SECONDARY");
                     if ((buttonState & (MotionEvent.BUTTON_SECONDARY | MotionEvent.BUTTON_STYLUS_PRIMARY)) != 0) {
                         conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_RIGHT);
                     }
@@ -2268,6 +2642,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                 // Mouse tertiary or stylus secondary is middle click
                 if ((changedButtons & (MotionEvent.BUTTON_TERTIARY | MotionEvent.BUTTON_STYLUS_SECONDARY)) != 0) {
+//                    Log.d("debug", "handleMotionEvent: middle click");
                     if ((buttonState & (MotionEvent.BUTTON_TERTIARY | MotionEvent.BUTTON_STYLUS_SECONDARY)) != 0) {
                         conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_MIDDLE);
                     }
@@ -2277,6 +2652,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 }
 
                 if (prefConfig.mouseNavButtons) {
+//                    Log.d("debug", "handleMotionEvent: mouseNavButtons");
                     if ((changedButtons & MotionEvent.BUTTON_BACK) != 0) {
                         if ((buttonState & MotionEvent.BUTTON_BACK) != 0) {
                             conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_X1);
@@ -2298,6 +2674,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                 // Handle stylus presses
                 if (event.getPointerCount() == 1 && event.getActionIndex() == 0) {
+//                    Log.d("debug", "handleMotionEvent: stylus presses");
                     if (event.getActionMasked() == MotionEvent.ACTION_DOWN) {
                         if (event.getToolType(0) == MotionEvent.TOOL_TYPE_STYLUS) {
                             lastAbsTouchDownTime = event.getEventTime();
@@ -2339,6 +2716,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             // This case is for fingers
             else
             {
+//                Log.d("debug", "handleMotionEvent: finger");
                 if (virtualController != null &&
                         (virtualController.getControllerMode() == VirtualController.ControllerMode.MoveButtons ||
                          virtualController.getControllerMode() == VirtualController.ControllerMode.ResizeButtons||
@@ -2371,34 +2749,70 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     yOffset = 0.f;
                 }
 
-                //五指打开输入法
-                if(prefConfig.quickSoftKeyboardFingers>0){
+                if (prefConfig.enableMouseMiddle) {
+                    //四指打开菜单，五指打开输入法
                     switch (event.getActionMasked()){
+                        case MotionEvent.ACTION_DOWN:
+                            maxPointerCount = 1;
+                            break;
                         case MotionEvent.ACTION_POINTER_DOWN:
-                            if(event.getPointerCount() == prefConfig.quickSoftKeyboardFingers){
-                                threeFingerDownTime = event.getEventTime();
-                                // Cancel the first and second touches to avoid
-                                // erroneous events
-                                for (TouchContext aTouchContext : touchContextMap) {
-                                    aTouchContext.cancelTouch();
-                                }
-                                return true;
-                            }
+                            maxPointerCount = Math.max(maxPointerCount, event.getPointerCount());
                             break;
                         case MotionEvent.ACTION_UP:
                         case MotionEvent.ACTION_POINTER_UP:
                             if (event.getPointerCount() == 1 &&
                                     (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || (event.getFlags() & MotionEvent.FLAG_CANCELED) == 0)) {
-                                // All fingers up
-                                if (event.getEventTime() - threeFingerDownTime < THREE_FINGER_TAP_THRESHOLD) {
-                                    // This is a 3 finger tap to bring up the keyboard
-                                    conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0,
-                                            0, 0, 0, 0, 0,
-                                            MoonBridge.LI_ROT_UNKNOWN);
+                                if(maxPointerCount == 4){
+                                    // 打开菜单
+                                    if(prefConfig.enableQtDialog){
+                                        showGameMenu(null);
+                                    }
+                                    // 重置 maxPointerCount
+                                    maxPointerCount = 0;
+                                    conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0, 0, 0, 0, 0, 0, MoonBridge.LI_ROT_UNKNOWN);
+                                    return true;
+                                }
+                                else if (maxPointerCount == 5) {
                                     toggleKeyboard();
+                                    // 重置 maxPointerCount
+                                    maxPointerCount = 0;
+                                    conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0, 0, 0, 0, 0, 0, MoonBridge.LI_ROT_UNKNOWN);
                                     return true;
                                 }
                             }
+                            break;
+                    }
+                }
+                else {
+                    //五指打开输入法
+                    if(prefConfig.quickSoftKeyboardFingers>0){
+                        switch (event.getActionMasked()){
+                            case MotionEvent.ACTION_POINTER_DOWN:
+                                if(event.getPointerCount() == prefConfig.quickSoftKeyboardFingers){
+                                    threeFingerDownTime = event.getEventTime();
+                                    // Cancel the first and second touches to avoid
+                                    // erroneous events
+                                    for (TouchContext aTouchContext : touchContextMap) {
+                                        aTouchContext.cancelTouch();
+                                    }
+                                    return true;
+                                }
+                                break;
+                            case MotionEvent.ACTION_UP:
+                            case MotionEvent.ACTION_POINTER_UP:
+                                if (event.getPointerCount() == 1 &&
+                                        (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || (event.getFlags() & MotionEvent.FLAG_CANCELED) == 0)) {
+                                    // All fingers up
+                                    if (event.getEventTime() - threeFingerDownTime < THREE_FINGER_TAP_THRESHOLD) {
+                                        // This is a 3 finger tap to bring up the keyboard
+                                        conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0,
+                                                0, 0, 0, 0, 0,
+                                                MoonBridge.LI_ROT_UNKNOWN);
+                                        toggleKeyboard();
+                                        return true;
+                                    }
+                                }
+                        }
                     }
                 }
 
@@ -2808,18 +3222,17 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 connecting = false;
                 updatePipAutoEnter();
 
+                // 重置光标到屏幕中心（与InputStream中的absCurrentPosX保持一致）
+                localCursorX = streamView.getWidth() / 2.0f;
+                localCursorY = streamView.getHeight() / 2.0f;
+
                 // Hide the mouse cursor now after a short delay.
                 // Doing it before dismissing the spinner seems to be undone
                 // when the spinner gets displayed. On Android Q, even now
                 // is too early to capture. We will delay a second to allow
                 // the spinner to dismiss before capturing.
                 Handler h = new Handler();
-                h.postDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        setInputGrabState(true);
-                    }
-                }, 500);
+                h.postDelayed(() -> setInputGrabState(true), 500);
 
                 // Keep the display on
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -2915,6 +3328,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
 
         LimeLog.info("surfaceChanged-->"+width+" x "+height + "----"+prefConfig.width+" x "+prefConfig.height);
+
         if (!attemptedConnection) {
             attemptedConnection = true;
 
@@ -3136,18 +3550,82 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }).setTitle("请选择鼠标模式").create().show();
     }
 
-    //本地鼠标光标切换
+    // 更新本地软件光标的显示/隐藏状态
+    public void updateLocalCursorVisibility(boolean hasCompatibleDevice) {
+        if (!useAndroidCursor && cursorDraw && hasCompatibleDevice && localCursorView.getVisibility() == View.GONE) {
+            localCursorView.setVisibility(View.VISIBLE);
+            // 确保 UI 刷新位置
+            syncLocalCursorUi();
+        } else if((!cursorDraw || !hasCompatibleDevice) && localCursorView.getVisibility() == View.VISIBLE){
+            localCursorView.setVisibility(View.GONE);
+        }
+    }
+
+    // 刷新 ImageView 在屏幕上的绝对位置
+    private void syncLocalCursorUi() {
+        if (localCursorView == null || streamView == null) return;
+
+        // 1. 计算图片应该在全屏画布上的绝对位置
+        // streamView.getX() 是视频流在屏幕上的起点
+        float absoluteX = streamView.getX() + localCursorX;
+        float absoluteY = streamView.getY() + localCursorY;
+
+        // 2. 重置矩阵并设置平移
+        cursorMatrix.reset();
+        cursorMatrix.postTranslate(absoluteX, absoluteY);
+
+        // 3. 应用矩阵到 ImageView
+        localCursorView.setImageMatrix(cursorMatrix);
+
+        // 提示系统此 View 需要立即重绘，而不是等待其他布局计算
+        localCursorView.invalidateOutline();
+    }
+
+    private float clamp(float value, float max) {
+        return Math.max(0.0f, Math.min(max, value));
+    }
+
+    // 供 handleMotionEvent 调用，根据相对位移更新坐标
+    private void moveLocalCursor(float dx, float dy) {
+        // 1. 直接累加位移
+        localCursorX += dx;
+        localCursorY += dy;
+
+        // 2. 底层风格的边界限制 (使用参考宽度/高度 - 1，确保索引不越界)
+        float maxWidth = (float) streamView.getWidth() - 1.0f;
+        float maxHeight = (float) streamView.getHeight() - 1.0f;
+
+        localCursorX = clamp(localCursorX, maxWidth);
+        localCursorY = clamp(localCursorY, maxHeight);
+    }
+
+    //本地鼠标模式切换
     public void switchMouseLocalCursor(){
         if (!grabbedInput) {
             inputCaptureProvider.enableCapture();
             grabbedInput = true;
         }
-        cursorVisible = !cursorVisible;
-        if (cursorVisible) {
-            inputCaptureProvider.showCursor();
-        } else {
-            inputCaptureProvider.hideCursor();
+
+        useAndroidCursor = !useAndroidCursor;
+        if (inputCaptureProvider.isCapturingEnabled()){
+            Toast.makeText(this, "切换为本地鼠标模式：原生", Toast.LENGTH_SHORT).show();
+            inputCaptureProvider.disableCapture();
+            if (!cursorDraw) {
+                Log.d("debug", "切换远程电脑光标显示状态");
+                sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+            }
         }
+        else {
+            if (cursorDraw)
+                Toast.makeText(this, "切换为远程鼠标模式：绘制", Toast.LENGTH_SHORT).show();
+            else {
+                Toast.makeText(this, "切换为远程鼠标模式：普通", Toast.LENGTH_SHORT).show();
+            }
+            Log.d("debug", "切换远程电脑光标显示状态");
+            sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+            inputCaptureProvider.enableCapture();
+        }
+        updateLocalCursorVisibility(inputCaptureProvider.isCapturingActive());
     }
 
     public void switchMouseModel(int which){
@@ -3379,7 +3857,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private AXFloatingView floatingView;
     private void initFloatingView(){
         floatingView = new AXFloatingView(this);
-        floatingView.setIconImage(R.drawable.app_icon_axi);
+        floatingView.setIconImage(R.drawable.app_icon);
         floatingView.setLayoutParams(AXFloatingView.getLayParams());
         ViewGroup decorViewGroup= (ViewGroup) getWindow().getDecorView();
         decorViewGroup.addView(floatingView);

@@ -209,6 +209,15 @@ public class PreferenceConfiguration {
     //物理光标捕获
     public boolean enableMouseLocalCursor;
 
+    //光标绘制
+    public boolean enableMouseDraw;
+
+    //自定义按键映射
+    public boolean enableCustomKeyMap;
+
+    //返回键映射鼠标中键
+    public boolean enableMouseMiddle;
+
     //禁用内置的特殊指令
     public boolean enableClearDefaultSpecial;
 
@@ -863,6 +872,12 @@ public class PreferenceConfiguration {
         config.enableTouchSensitivity=prefs.getBoolean("checkbox_enable_touch_sensitivity",false);
 
         config.enableMouseLocalCursor=prefs.getBoolean("checkbox_mouse_local_cursor",false);
+
+        config.enableMouseDraw=prefs.getBoolean("checkbox_mouse_remote_draw",false);
+
+        config.enableCustomKeyMap=prefs.getBoolean("checkbox_mouse_local_cursor",false);
+
+        config.enableMouseMiddle=prefs.getBoolean("checkbox_mouse_middle",false);
 
         config.enablePerfOverlayLiteDialog=prefs.getBoolean("checkbox_enable_perf_overlay_lite_dialog",false);
 

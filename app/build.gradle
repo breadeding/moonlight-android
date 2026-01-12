@@ -86,7 +86,7 @@ android {
             resValue "string", "app_label", "Moonlight (Debug)"
             resValue "string", "app_label_root", "Moonlight (Root Debug)"
 
-            minifyEnabled true
+            minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
         release {
@@ -120,8 +120,8 @@ android {
             // is to please change the applicationId before you publish.
             //
             // TL;DR: Leave the following line alone!
-            applicationIdSuffix ".unofficialA"
-            resValue "string", "app_label", "月光·阿西西"
+            applicationIdSuffix ".unofficialB"
+            resValue "string", "app_label", "Moonlight"
             resValue "string", "app_label_root", "Moonlight (Root)"
 
             minifyEnabled true
