@@ -175,8 +175,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private AndroidNativePointerCaptureProvider inputCaptureProvider;
     private int modifierFlags = 0;
     private boolean grabbedInput = true;
-    private boolean useAndroidCursor;
-    private boolean cursorVisible = false;
+    private boolean useAndroidCursor = true;
+    private boolean cursorDraw = false;
     private boolean waitingForAllModifiersUp = false;
     private int specialKeyCode = KeyEvent.KEYCODE_UNKNOWN;
     private StreamView streamView;
@@ -240,7 +240,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private float localCursorY = 0;
     private Matrix cursorMatrix = new Matrix();
     private float fakeScrollInitialY = -1;
-    private float fakeScrollInitialX = -1;
     private float scrollTotal = 0;
     private long lastMouseHoverTime = 0; // 记录最后一次鼠标活跃的时间
     private boolean waitRelease = false;
@@ -335,9 +334,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         performanceRumble=findViewById(R.id.performanceRumble);
         switchPerformanceRumbleHUD();
-        //光标是否显示
-        cursorVisible = prefConfig.enableMouseLocalCursor;
-        useAndroidCursor = cursorVisible;
+        //启用本地鼠标模式
+        useAndroidCursor = prefConfig.enableMouseLocalCursor;
+        cursorDraw = prefConfig.enableMouseDraw;
 
 //        //串流画面 顶部居中显示
 //        if(prefConfig.enableDisplayTopCenter){
@@ -409,7 +408,11 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
         inputCaptureProvider = new AndroidNativePointerCaptureProvider(this, streamView);
         inputCaptureProvider.setOnCaptureDeviceStatusListener(hasCompatibleDevice -> {
-            updateLocalCursorVisibility(hasCompatibleDevice, true);
+            updateLocalCursorVisibility(hasCompatibleDevice);
+            if(conn!=null && !useAndroidCursor && cursorDraw){
+                Log.d("debug", "setOnCaptureDeviceStatusListener：切换远程电脑光标显示状态");
+                sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+            }
         });
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
@@ -1344,8 +1347,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
     @Override
     protected void onPause() {
-        if(conn!=null && (useAndroidCursor || (cursorVisible && localCursorView.getVisibility() == View.VISIBLE))){
-//            Log.d("debug", "onPause: 切换电脑光标显示状态");
+        if(conn!=null && (useAndroidCursor || cursorDraw)){
             // 发送快捷键切换电脑光标显示状态
             Log.d("debug", "onPause：切换远程电脑光标显示状态");
             sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
@@ -1574,37 +1576,26 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 
                     // Toggle local cursor mode
                     case KeyEvent.KEYCODE_C:
-                        Toast.makeText(this, "Toggle local cursor mode", Toast.LENGTH_SHORT).show();
                         switchMouseLocalCursor();
                         break;
 
-                    // 切换安卓原生光标
+                    // 切换光标显示方案：绘制/远程
                     case KeyEvent.KEYCODE_V:
+
                         if (inputCaptureProvider.isCapturingEnabled()) {
-                            Toast.makeText(this, "切换为原生光标", Toast.LENGTH_SHORT).show();
-                            Log.d("debug", "切换为原生光标");
-                            useAndroidCursor = true;
-                            // 切换为原生光标
-                            if (!cursorVisible) {
-                                Log.d("debug", "KeyEvent.KEYCODE_V切换为原生光标: 切换远程电脑光标显示状态");
-                                sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
-                            }
+                            cursorDraw = !cursorDraw;
+                            if (cursorDraw)
+                                Toast.makeText(this, "切换为远程鼠标模式：绘制", Toast.LENGTH_SHORT).show();
                             else
-                                updateLocalCursorVisibility(false, false);
-                            inputCaptureProvider.disableCapture();
+                                Toast.makeText(this, "切换为远程鼠标模式：普通", Toast.LENGTH_SHORT).show();
+
+                            Log.d("debug", "KeyEvent.KEYCODE_V: 切换远程电脑光标显示状态");
+                            sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+
+                            updateLocalCursorVisibility(inputCaptureProvider.isCapturingActive());
                         }
                         else {
-                            Toast.makeText(this, "切换为光标绘制", Toast.LENGTH_SHORT).show();
-                            Log.d("debug", "切换为光标绘制");
-                            useAndroidCursor = false;
-                            // 切换为光标绘制
-                            if (!cursorVisible) {
-                                Log.d("debug", "KeyEvent.KEYCODE_V切换为光标绘制：切换远程电脑光标显示状态");
-                                sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
-                            }
-                            else
-                                updateLocalCursorVisibility(true, false);
-                            inputCaptureProvider.enableCapture();
+                            Toast.makeText(this, "本地模式只能使用原生鼠标", Toast.LENGTH_SHORT).show();
                         }
                         break;
 
@@ -1684,68 +1675,70 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         // 自定义组合键，只能其它+esc，esc+其它时，esc抬起时其它才会down
         int keyCode = event.getKeyCode();
         pressedKeys.add(keyCode);
-        if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
-            escState = 1;
+        if (prefConfig.enableCustomKeyMap) {
+            if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                escState = 1;
 //            Log.d("debug", "Esc: Down");
-            // 启动延迟判断是否是单独的ESC键
-            escConfirmRunnable = () -> {
-                if (escState == 1) {
+                // 启动延迟判断是否是单独的ESC键
+                escConfirmRunnable = () -> {
+                    if (escState == 1) {
 //                    Log.d("debug", "Esc: Confirmed as Single");
+                        short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
+                        conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                        escState = 0;
+                    }
+                };
+                handler.postDelayed(escConfirmRunnable, 200); // 延迟判断
+                return true;
+            }
+
+            if (escState == 1) {
+                // 若在ESC后检测到自定义键按下，取消ESC单键判断
+                handler.removeCallbacks(escConfirmRunnable);
+
+                if (keyCode == KeyEvent.KEYCODE_Q) {
+//                Log.d("debug", "Esc + Q: Down");
+                    escState = 2;
+                    return true;
+                }
+                else if (keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_9) {
+//                Log.d("debug", "Esc + num: Down");
+                    escState = 2;
+                    int fKeyCode = KeyEvent.KEYCODE_F1 + (keyCode - KeyEvent.KEYCODE_1);
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                else if (keyCode == KeyEvent.KEYCODE_0) {
+//                Log.d("debug", "Esc + 0: Down -> F10");
+                    escState = 2;
+                    int fKeyCode = KeyEvent.KEYCODE_F10;
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                else if (keyCode == KeyEvent.KEYCODE_MINUS) {
+//                Log.d("debug", "Esc + -: Down -> F11");
+                    escState = 2;
+                    int fKeyCode = KeyEvent.KEYCODE_F11;
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                else if (keyCode == KeyEvent.KEYCODE_EQUALS) {
+//                Log.d("debug", "Esc + =: Down -> F12");
+                    escState = 2;
+                    int fKeyCode = KeyEvent.KEYCODE_F12;
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                else{
+                    // 非自定义组合键，不做处理
                     short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
                     conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
                     escState = 0;
                 }
-            };
-            handler.postDelayed(escConfirmRunnable, 200); // 延迟判断
-            return true;
-        }
-
-        if (escState == 1) {
-            // 若在ESC后检测到自定义键按下，取消ESC单键判断
-            handler.removeCallbacks(escConfirmRunnable);
-
-            if (keyCode == KeyEvent.KEYCODE_Q) {
-//                Log.d("debug", "Esc + Q: Down");
-                escState = 2;
-                return true;
-            }
-            else if (keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_9) {
-//                Log.d("debug", "Esc + num: Down");
-                escState = 2;
-                int fKeyCode = KeyEvent.KEYCODE_F1 + (keyCode - KeyEvent.KEYCODE_1);
-                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
-                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
-                return true;
-            }
-            else if (keyCode == KeyEvent.KEYCODE_0) {
-//                Log.d("debug", "Esc + 0: Down -> F10");
-                escState = 2;
-                int fKeyCode = KeyEvent.KEYCODE_F10;
-                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
-                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
-                return true;
-            }
-            else if (keyCode == KeyEvent.KEYCODE_MINUS) {
-//                Log.d("debug", "Esc + -: Down -> F11");
-                escState = 2;
-                int fKeyCode = KeyEvent.KEYCODE_F11;
-                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
-                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
-                return true;
-            }
-            else if (keyCode == KeyEvent.KEYCODE_EQUALS) {
-//                Log.d("debug", "Esc + =: Down -> F12");
-                escState = 2;
-                int fKeyCode = KeyEvent.KEYCODE_F12;
-                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
-                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
-                return true;
-            }
-            else{
-                // 非自定义组合键，不做处理
-                short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
-                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
-                escState = 0;
             }
         }
 
@@ -1775,7 +1768,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
 
         // 鼠标中键（同时影响触摸返回）
-        if (eventSource == InputDevice.SOURCE_KEYBOARD &&
+        if (prefConfig.enableMouseMiddle && eventSource == InputDevice.SOURCE_KEYBOARD &&
                 event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
 //            Log.d("debug", "handleKeyDown: " + event.getKeyCode());
             conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_MIDDLE);
@@ -1843,66 +1836,68 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         int keyCode = event.getKeyCode();
         pressedKeys.remove(keyCode);
 
-        if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
-            handler.removeCallbacks(escConfirmRunnable); // 若未执行则移除
-            if (escState == 1) {
-                // 没有组合键，短时间内抬起
+        if (prefConfig.enableCustomKeyMap) {
+            if (keyCode == KeyEvent.KEYCODE_ESCAPE) {
+                handler.removeCallbacks(escConfirmRunnable); // 若未执行则移除
+                if (escState == 1) {
+                    // 没有组合键，短时间内抬起
 //                Log.d("debug", "Esc: Up (no combo)");
-                short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
-                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
-                // 延迟发送 KEY_UP，不堵塞主线程
-                handler.postDelayed(() -> {
-                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
-                }, 50); // 延迟 50ms
-                escState = 0;
-            } else if (escState == 2) {
-                // 组合键已触发，不处理ESC
+                    short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_DOWN, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    // 延迟发送 KEY_UP，不堵塞主线程
+                    handler.postDelayed(() -> {
+                        conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    }, 50); // 延迟 50ms
+                    escState = 0;
+                } else if (escState == 2) {
+                    // 组合键已触发，不处理ESC
 //                Log.d("debug", "Esc: Up (combo)");
-                escState = 0;
-            }else{
+                    escState = 0;
+                }else{
 //                Log.d("debug", "Esc: Up (no custom combo)");
-                short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
-                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
-                escState = 0;
-            }
-
-            return true;
-        }
-        if(escState == 2){
-            if (keyCode == KeyEvent.KEYCODE_Q) {
-//                Log.d("debug", "Esc + Q: Up");
-                if (prefConfig.enableQtDialog) {
-                    showGameMenu(null);
+                    short translated = keyboardTranslator.translate(KeyEvent.KEYCODE_ESCAPE, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    escState = 0;
                 }
+
                 return true;
             }
-            if (keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_9) {
+            if(escState == 2){
+                if (keyCode == KeyEvent.KEYCODE_Q) {
+//                Log.d("debug", "Esc + Q: Up");
+                    if (prefConfig.enableQtDialog) {
+                        showGameMenu(null);
+                    }
+                    return true;
+                }
+                if (keyCode >= KeyEvent.KEYCODE_1 && keyCode <= KeyEvent.KEYCODE_9) {
 //                Log.d("debug", "Esc + num: Up");
-                int fKeyCode = KeyEvent.KEYCODE_F1 + (keyCode - KeyEvent.KEYCODE_1);
-                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
-                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
-                return true;
-            }
-            if (keyCode == KeyEvent.KEYCODE_0) {
+                    int fKeyCode = KeyEvent.KEYCODE_F1 + (keyCode - KeyEvent.KEYCODE_1);
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                if (keyCode == KeyEvent.KEYCODE_0) {
 //                Log.d("debug", "Esc + 0: Up -> F10");
-                int fKeyCode = KeyEvent.KEYCODE_F10;
-                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
-                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
-                return true;
-            }
-            if (keyCode == KeyEvent.KEYCODE_MINUS) {
+                    int fKeyCode = KeyEvent.KEYCODE_F10;
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                if (keyCode == KeyEvent.KEYCODE_MINUS) {
 //                Log.d("debug", "Esc + -: Up -> F11");
-                int fKeyCode = KeyEvent.KEYCODE_F11;
-                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
-                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
-                return true;
-            }
-            if (keyCode == KeyEvent.KEYCODE_EQUALS) {
+                    int fKeyCode = KeyEvent.KEYCODE_F11;
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
+                if (keyCode == KeyEvent.KEYCODE_EQUALS) {
 //                Log.d("debug", "Esc + =: Up -> F12");
-                int fKeyCode = KeyEvent.KEYCODE_F12;
-                short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
-                conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
-                return true;
+                    int fKeyCode = KeyEvent.KEYCODE_F12;
+                    short translated = keyboardTranslator.translate(fKeyCode, event.getDeviceId());
+                    conn.sendKeyboardInput(translated, KeyboardPacket.KEY_UP, (byte) 0, MoonBridge.SS_KBE_FLAG_NON_NORMALIZED);
+                    return true;
+                }
             }
         }
 
@@ -1932,7 +1927,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
 
         // 鼠标中键（同时影响触摸返回）
-        if (eventSource == InputDevice.SOURCE_KEYBOARD &&
+        if (prefConfig.enableMouseMiddle && eventSource == InputDevice.SOURCE_KEYBOARD &&
                 event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
 //            Log.d("debug", "handleKeyUp: " + event.getKeyCode());
             conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_MIDDLE);
@@ -2337,16 +2332,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             eventSend = sendPenEventForPointer(view, event, eventType, toolType, event.getActionIndex());
         }
 
-        if(eventSend){
-            // 触控笔隐藏鼠标
-            if(localCursorView.getVisibility() == View.VISIBLE){
-                if(conn!=null){
-                    Log.d("debug", "触控笔隐藏鼠标，切换远程电脑光标显示状态");
-                    sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
-                }
-                localCursorView.setVisibility(View.GONE);
-            }
-        }
+        // 触控事件，隐藏绘制
+        if (eventSend && cursorDraw && localCursorView.getVisibility() == View.VISIBLE)
+            localCursorView.setVisibility(View.GONE);
         return eventSend;
     }
 
@@ -2387,16 +2375,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             eventSend = sendTouchEventForPointer(view, event, eventType, event.getActionIndex());
         }
 
-        if(eventSend){
-            // 触摸隐藏鼠标
-            if(localCursorView.getVisibility() == View.VISIBLE){
-                if(conn!=null){
-                    Log.d("debug", "触摸隐藏鼠标，切换远程电脑光标显示状态");
-                    sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
-                }
-                localCursorView.setVisibility(View.GONE);
-            }
-        }
+        // 触控笔事件，隐藏绘制
+        if (eventSend && cursorDraw && localCursorView.getVisibility() == View.VISIBLE)
+            localCursorView.setVisibility(View.GONE);
         return eventSend;
     }
 
@@ -2434,7 +2415,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     long currentTime = android.os.SystemClock.uptimeMillis();
                     long timeDiff = currentTime - lastMouseHoverTime;
                     if (timeDiff <= 40 || waitRelease){
-                        fakeScrollInitialX = event.getX();
                         fakeScrollInitialY = event.getY();
                         // 同步发送绝对坐标给远程
                         conn.sendMousePosition(
@@ -2456,7 +2436,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     float deltaY = event.getY() - fakeScrollInitialY;
 //                    Log.d("debug", "deltaY: " + deltaY);
                     // 向上滑一次时deltaY=64，向下-64，滚动一格产生两次
-                    fakeScrollInitialX = event.getX();
                     fakeScrollInitialY = event.getY();
                     scrollTotal = scrollTotal + deltaY;
                     if (scrollTotal > 127.99){
@@ -2492,7 +2471,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         detectScrolling = false;
                     }
                     fakeScrollInitialY = -1;
-                    fakeScrollInitialX = -1;
                     scrollTotal = 0;
                     return true;
                 }
@@ -2575,27 +2553,14 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     if (deltaX != 0 || deltaY != 0) {
                         // 计算光标绝对位置
                         moveLocalCursor(deltaX, deltaY);
-                        if (cursorVisible) {
-                            // 触控时会临时关闭鼠标绘制，移动鼠标时重新打开
-                            if (!useAndroidCursor && localCursorView.getVisibility() == View.GONE) {
+                        if (cursorDraw) {
+                            if (localCursorView.getVisibility() == View.GONE)
                                 localCursorView.setVisibility(View.VISIBLE);
-                                if(conn!=null){
-                                    Log.d("debug", "鼠标绘制: 移动鼠标重新打开");
-                                    Log.d("debug", "切换远程电脑光标显示状态");
-                                    sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
-                                }
-                                // 确保 UI 刷新位置
-                                syncLocalCursorUi();
-                            }
                             // 提交 UI 更新
                             syncLocalCursorUi();
+
                             // 同步发送绝对坐标给远程
-                            conn.sendMousePosition(
-                                    (short)localCursorX,
-                                    (short)localCursorY,
-                                    (short)streamView.getWidth(),
-                                    (short)streamView.getHeight()
-                            );
+                            conn.sendMousePosition((short)localCursorX, (short)localCursorY, (short)streamView.getWidth(), (short)streamView.getHeight());
                         }
                         else {
                             if (prefConfig.absoluteMouseMode) {
@@ -2784,67 +2749,71 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     yOffset = 0.f;
                 }
 
-                //五指打开输入法
-//                if(prefConfig.quickSoftKeyboardFingers>0){
-//                    switch (event.getActionMasked()){
-//                        case MotionEvent.ACTION_POINTER_DOWN:
-//                            if(event.getPointerCount() == prefConfig.quickSoftKeyboardFingers){
-//                                threeFingerDownTime = event.getEventTime();
-//                                // Cancel the first and second touches to avoid
-//                                // erroneous events
-//                                for (TouchContext aTouchContext : touchContextMap) {
-//                                    aTouchContext.cancelTouch();
-//                                }
-//                                return true;
-//                            }
-//                            break;
-//                        case MotionEvent.ACTION_UP:
-//                        case MotionEvent.ACTION_POINTER_UP:
-//                            if (event.getPointerCount() == 1 &&
-//                                    (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || (event.getFlags() & MotionEvent.FLAG_CANCELED) == 0)) {
-//                                // All fingers up
-//                                if (event.getEventTime() - threeFingerDownTime < THREE_FINGER_TAP_THRESHOLD) {
-//                                    // This is a 3 finger tap to bring up the keyboard
-//                                    conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0,
-//                                            0, 0, 0, 0, 0,
-//                                            MoonBridge.LI_ROT_UNKNOWN);
-//                                    toggleKeyboard();
-//                                    return true;
-//                                }
-//                            }
-//                    }
-//                }
-                //四指打开菜单，五指打开输入法
-                switch (event.getActionMasked()){
-                    case MotionEvent.ACTION_DOWN:
-                        maxPointerCount = 1;
-                        break;
-                    case MotionEvent.ACTION_POINTER_DOWN:
-                        maxPointerCount = Math.max(maxPointerCount, event.getPointerCount());
-                        break;
-                    case MotionEvent.ACTION_UP:
-                    case MotionEvent.ACTION_POINTER_UP:
-                        if (event.getPointerCount() == 1 &&
-                                (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || (event.getFlags() & MotionEvent.FLAG_CANCELED) == 0)) {
-                            if(maxPointerCount == 4){
-                                // 打开菜单
-                                if(prefConfig.enableQtDialog){
-                                    showGameMenu(null);
+                if (prefConfig.enableMouseMiddle) {
+                    //四指打开菜单，五指打开输入法
+                    switch (event.getActionMasked()){
+                        case MotionEvent.ACTION_DOWN:
+                            maxPointerCount = 1;
+                            break;
+                        case MotionEvent.ACTION_POINTER_DOWN:
+                            maxPointerCount = Math.max(maxPointerCount, event.getPointerCount());
+                            break;
+                        case MotionEvent.ACTION_UP:
+                        case MotionEvent.ACTION_POINTER_UP:
+                            if (event.getPointerCount() == 1 &&
+                                    (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || (event.getFlags() & MotionEvent.FLAG_CANCELED) == 0)) {
+                                if(maxPointerCount == 4){
+                                    // 打开菜单
+                                    if(prefConfig.enableQtDialog){
+                                        showGameMenu(null);
+                                    }
+                                    // 重置 maxPointerCount
+                                    maxPointerCount = 0;
+                                    conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0, 0, 0, 0, 0, 0, MoonBridge.LI_ROT_UNKNOWN);
+                                    return true;
                                 }
-                                // 重置 maxPointerCount
-                                maxPointerCount = 0;
-                                conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0, 0, 0, 0, 0, 0, MoonBridge.LI_ROT_UNKNOWN);
-                                return true;
+                                else if (maxPointerCount == 5) {
+                                    toggleKeyboard();
+                                    // 重置 maxPointerCount
+                                    maxPointerCount = 0;
+                                    conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0, 0, 0, 0, 0, 0, MoonBridge.LI_ROT_UNKNOWN);
+                                    return true;
+                                }
                             }
-                            else if (maxPointerCount == 5) {
-                                toggleKeyboard();
-                                // 重置 maxPointerCount
-                                maxPointerCount = 0;
-                                conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0, 0, 0, 0, 0, 0, MoonBridge.LI_ROT_UNKNOWN);
-                                return true;
-                            }
+                            break;
+                    }
+                }
+                else {
+                    //五指打开输入法
+                    if(prefConfig.quickSoftKeyboardFingers>0){
+                        switch (event.getActionMasked()){
+                            case MotionEvent.ACTION_POINTER_DOWN:
+                                if(event.getPointerCount() == prefConfig.quickSoftKeyboardFingers){
+                                    threeFingerDownTime = event.getEventTime();
+                                    // Cancel the first and second touches to avoid
+                                    // erroneous events
+                                    for (TouchContext aTouchContext : touchContextMap) {
+                                        aTouchContext.cancelTouch();
+                                    }
+                                    return true;
+                                }
+                                break;
+                            case MotionEvent.ACTION_UP:
+                            case MotionEvent.ACTION_POINTER_UP:
+                                if (event.getPointerCount() == 1 &&
+                                        (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || (event.getFlags() & MotionEvent.FLAG_CANCELED) == 0)) {
+                                    // All fingers up
+                                    if (event.getEventTime() - threeFingerDownTime < THREE_FINGER_TAP_THRESHOLD) {
+                                        // This is a 3 finger tap to bring up the keyboard
+                                        conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0,
+                                                0, 0, 0, 0, 0,
+                                                MoonBridge.LI_ROT_UNKNOWN);
+                                        toggleKeyboard();
+                                        return true;
+                                    }
+                                }
                         }
-                        break;
+                    }
                 }
 
                 // TODO: Re-enable native touch when have a better solution for handling
@@ -3582,29 +3551,12 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     }
 
     // 更新本地软件光标的显示/隐藏状态
-    public void updateLocalCursorVisibility(boolean hasCompatibleDevice, boolean updateRemoteCursor) {
-        if (!useAndroidCursor && cursorVisible && hasCompatibleDevice && localCursorView.getVisibility() == View.GONE) {
+    public void updateLocalCursorVisibility(boolean hasCompatibleDevice) {
+        if (!useAndroidCursor && cursorDraw && hasCompatibleDevice && localCursorView.getVisibility() == View.GONE) {
             localCursorView.setVisibility(View.VISIBLE);
-            if(conn!=null){
-                Log.d("debug", "鼠标绘制: 隐藏-》显示");
-                // 发送快捷键切换电脑光标显示状态
-                if (updateRemoteCursor){
-                    Log.d("debug", "切换远程电脑光标显示状态");
-                    sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
-                }
-
-            }
             // 确保 UI 刷新位置
             syncLocalCursorUi();
-        } else if((!cursorVisible || !hasCompatibleDevice) && localCursorView.getVisibility() == View.VISIBLE){
-            if(conn!=null){
-                Log.d("debug", "鼠标绘制: 显示-》隐藏");
-                // 发送快捷键切换电脑光标显示状态
-                if (updateRemoteCursor){
-                    Log.d("debug", "切换远程电脑光标显示状态");
-                    sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
-                }
-            }
+        } else if((!cursorDraw || !hasCompatibleDevice) && localCursorView.getVisibility() == View.VISIBLE){
             localCursorView.setVisibility(View.GONE);
         }
     }
@@ -3647,27 +3599,33 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         localCursorY = clamp(localCursorY, maxHeight);
     }
 
-    //本地鼠标光标切换
+    //本地鼠标模式切换
     public void switchMouseLocalCursor(){
         if (!grabbedInput) {
             inputCaptureProvider.enableCapture();
             grabbedInput = true;
         }
-        cursorVisible = !cursorVisible;
 
+        useAndroidCursor = !useAndroidCursor;
         if (inputCaptureProvider.isCapturingEnabled()){
-            Log.d("debug", "切换为本地鼠标模式");
-            useAndroidCursor = true;
+            Toast.makeText(this, "切换为本地鼠标模式：原生", Toast.LENGTH_SHORT).show();
             inputCaptureProvider.disableCapture();
+            if (!cursorDraw) {
+                Log.d("debug", "切换远程电脑光标显示状态");
+                sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+            }
         }
         else {
-            Log.d("debug", "切换为远程鼠标模式");
-            useAndroidCursor = false;
+            if (cursorDraw)
+                Toast.makeText(this, "切换为远程鼠标模式：绘制", Toast.LENGTH_SHORT).show();
+            else {
+                Toast.makeText(this, "切换为远程鼠标模式：普通", Toast.LENGTH_SHORT).show();
+            }
+            Log.d("debug", "切换远程电脑光标显示状态");
+            sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
             inputCaptureProvider.enableCapture();
         }
-        updateLocalCursorVisibility(inputCaptureProvider.isCapturingActive(), false);
-        Log.d("debug", "切换远程电脑光标显示状态");
-        sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
+        updateLocalCursorVisibility(inputCaptureProvider.isCapturingActive());
     }
 
     public void switchMouseModel(int which){

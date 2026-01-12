@@ -51,27 +51,29 @@ public class KeyboardAccessibilityService extends AccessibilityService {
         if (Game.instance != null && Game.instance.connected && !BLACKLIST_KEYS.contains(keyCode)) {
 
             if (action == KeyEvent.ACTION_DOWN) {
-                switch(event.getKeyCode()){
-                    case KeyEvent.KEYCODE_HOME:
-                        // HOME键映射ESC
-                        Game.instance.handleKeyDown(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ESCAPE));
-                        return true;
-                    case KeyEvent.KEYCODE_SYSRQ:
-                        // 安卓截图键映射Windows PRINT SCREEN键
-                        Game.instance.handleKeyDown(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_SYSRQ));
-                        return true;
-                    case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
-                        // 安卓上一首键映射Windows F5键
-                        Game.instance.handleKeyDown(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_F5));
-                        return true;
-                    case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
-                        // 安卓播放暂停键映射Windows F10键
-                        Game.instance.handleKeyDown(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_F10));
-                        return true;
-                    case KeyEvent.KEYCODE_MEDIA_NEXT:
-                        // 安卓下一首键映射Windows F11键
-                        Game.instance.handleKeyDown(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_F11));
-                        return true;
+                if (PreferenceConfiguration.readPreferences(this).enableCustomKeyMap) {
+                    switch(event.getKeyCode()){
+                        case KeyEvent.KEYCODE_HOME:
+                            // HOME键映射ESC
+                            Game.instance.handleKeyDown(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_ESCAPE));
+                            return true;
+                        case KeyEvent.KEYCODE_SYSRQ:
+                            // 安卓截图键映射Windows PRINT SCREEN键
+                            Game.instance.handleKeyDown(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_SYSRQ));
+                            return true;
+                        case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+                            // 安卓上一首键映射Windows F5键
+                            Game.instance.handleKeyDown(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_F5));
+                            return true;
+                        case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+                            // 安卓播放暂停键映射Windows F10键
+                            Game.instance.handleKeyDown(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_F10));
+                            return true;
+                        case KeyEvent.KEYCODE_MEDIA_NEXT:
+                            // 安卓下一首键映射Windows F11键
+                            Game.instance.handleKeyDown(new KeyEvent(KeyEvent.ACTION_DOWN, KeyEvent.KEYCODE_F11));
+                            return true;
+                    }
                 }
 
                 //fix 小米平板esc键按钮映射错误 KEYCODE_BACK=4
@@ -98,27 +100,29 @@ public class KeyboardAccessibilityService extends AccessibilityService {
                 return true;
             } else if (action == KeyEvent.ACTION_UP) {
 //                Log.d("debug", "AccGetKeyCode: " + event.getKeyCode());
-                switch(event.getKeyCode()){
-                    case KeyEvent.KEYCODE_HOME:
-                        // HOME键映射ESC
-                        Game.instance.handleKeyUp(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ESCAPE));
-                        return true;
-                    case KeyEvent.KEYCODE_SYSRQ:
-                        // 安卓截图键映射Windows PRINT SCREEN键
-                        Game.instance.handleKeyUp(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_SYSRQ));
-                        return true;
-                    case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
-                        // 安卓上一首键映射Windows F5键
-                        Game.instance.handleKeyUp(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_F5));
-                        return true;
-                    case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
-                        // 安卓播放暂停键映射Windows F10键
-                        Game.instance.handleKeyUp(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_F10));
-                        return true;
-                    case KeyEvent.KEYCODE_MEDIA_NEXT:
-                        // 安卓下一首键映射Windows F11键
-                        Game.instance.handleKeyUp(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_F11));
-                        return true;
+                if (PreferenceConfiguration.readPreferences(this).enableCustomKeyMap) {
+                    switch(event.getKeyCode()){
+                        case KeyEvent.KEYCODE_HOME:
+                            // HOME键映射ESC
+                            Game.instance.handleKeyUp(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_ESCAPE));
+                            return true;
+                        case KeyEvent.KEYCODE_SYSRQ:
+                            // 安卓截图键映射Windows PRINT SCREEN键
+                            Game.instance.handleKeyUp(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_SYSRQ));
+                            return true;
+                        case KeyEvent.KEYCODE_MEDIA_PREVIOUS:
+                            // 安卓上一首键映射Windows F5键
+                            Game.instance.handleKeyUp(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_F5));
+                            return true;
+                        case KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE:
+                            // 安卓播放暂停键映射Windows F10键
+                            Game.instance.handleKeyUp(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_F10));
+                            return true;
+                        case KeyEvent.KEYCODE_MEDIA_NEXT:
+                            // 安卓下一首键映射Windows F11键
+                            Game.instance.handleKeyUp(new KeyEvent(KeyEvent.ACTION_UP, KeyEvent.KEYCODE_F11));
+                            return true;
+                    }
                 }
 
                 //fix 小米平板esc键按钮映射错误 KEYCODE_BACK=4
