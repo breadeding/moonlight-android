@@ -1,30 +1,59 @@
-# 月光·阿西西
-## 此项目实现对官方Moonlight安卓端功能修改<br>
-### 如果你有更好的想法或者功能实现也欢迎提交PR<br>
-### 如果喜欢数码和游戏，可以关注我的社交媒体账号
-### B站(https://space.bilibili.com/16893379) 、Youtube(https://www.youtube.com/@AxixiTV)
+# Moonlight Android
 
-此项目版本主要实现如下功能：<br>
-1、全新游戏菜单UI<br>
-2、自定义虚拟按键 支持导入导出<br>
-3、自定义分辨率<br>
-4、自定义码率<br>
-5、多种鼠标模式切换（普通鼠标、多点触控、触控板、禁用触屏操作、本地鼠标模式）<br>
-6、虚拟手柄皮肤优化、自由摇杆<br>
-7、外接显示器模式<br>
-8、适配ds4、ds5、nspro usb手柄驱动<br>
-9、精简的性能信息显示<br>
-10、自定义快捷指令<br>
-11、方便切换软键盘<br>
-12、竖屏模式<br>
-13、SBS娱乐模式<br>
-14、画面置顶显示 折叠屏有点用<br>
-15、虚拟触控板空间及灵敏度调节，游玩右键转视角游戏。例如魔兽<br>
-16、强制使用设备本身的震动马达（可能你的手柄震动效果不佳）<br>
-17、阿西西手柄调试页面 查看手柄震动及陀螺仪信息、安卓内核版本信息<br>
+此项目实现对[Moonlight安卓端 阿西西修改版](https://github.com/Axixi2233/moonlight-android)的功能改进<br><br>
 
-<img width="2560" height="1600" alt="Screenshot_20250409-180147" src="https://github.com/user-attachments/assets/25fc1ad2-c804-4597-a832-48ec1717cf9a" />
 
+# 目前已实现功能
+
+* **自动获取无障碍权限**
+  > *需要通过ADB授权android.permission.WRITE_SECURE_SETTINGS*
+
+* **安卓本地鼠标特殊滚轮的识别**
+  > *在使用安卓本地鼠标光标时，部分设备无法正确获取滚轮事件，如Matepad，滚动滚动时会产生触屏效果造成大范围滑动*
+
+* **非本地鼠标模式也支持绘制本地鼠标光标**
+  > *延迟高于本地鼠标，但略低于远程鼠标，如果使用本地鼠标光标仍有问题，可以使用此方法作为替代*
+
+* **自动切换远程电脑的光标显示**
+  > *在本地鼠标模式和光标绘制模式下，自动根据状态发送电脑光标显示开关请求*
+
+* **适用于部分平板键盘的按键映射**
+  > * Home → **Esc**
+  > * Esc + [1-0, -, =] → **F1 - F12**
+  > * Esc + Q → **呼出串流菜单**
+  > * 安卓截图键 → **Windows 截图 (Win+Shift+S)**
+  > * 安卓媒体键 (上一首/播放暂停/下一首) → **F5/F10/F11**
+
+* **支持鼠标中键**
+  > *部分设备将鼠标中键识别为返回键，此功能开启可以强制映射返回键为鼠标中键，此时无法触摸返回，因此此功能开启时固定使用四指触摸打开串流菜单，五指触摸打开输入法*
+
+<br><br>
+
+# Moonlight Android
+
+This project implements functional improvements to [Moonlight Android client, modified by Axixi](https://github.com/Axixi2233/moonlight-android)<br><br>
+
+
+# Key Features
+
+* **Auto-grant Accessibility Permissions**
+  > *Requires ADB authorization for android.permission.WRITE_SECURE_SETTINGS.*
+* **Android Local Mouse Scroll Wheel Fix**
+  > *Resolves scrolling issues on specific devices (e.g., MatePad) where scroll wheel inputs are incorrectly interpreted as touch swipes, causing excessive screen movement.*
+* **Local Cursor Rendering in Non-Local Mouse Mode**
+  > *Provides a latency-optimized alternative. Latency is higher than the system local cursor but slightly lower than the remote stream cursor. Ideal as a fallback if the local mouse mode encounters issues.*
+* **Smart Remote Cursor Visibility Sync**
+  > *Dynamically toggles the host computer's cursor visibility based on the current local cursor state.*
+* **Keyboard Remapping for Tablets**
+  > * Home → **Esc**
+  > * Esc + [1-0, -, =] → **F1 - F12**
+  > * Esc + Q → **Streaming Menu**
+  > * Android Screenshot Key → **Windows Screenshot**
+  > * Media Keys (Prev/Pause/Next) → **F5/F10/F11**
+* **Middle Mouse Button Support**
+  > *Fixes issues where devices map the middle button to "Back." When enabled, the Back key is forced to Middle Click. Note: Back navigation is disabled; use 4-finger tap for the menu and 5-finger tap for the IME (Keyboard).*
+
+<br><br>
 
 # Moonlight Android
 
