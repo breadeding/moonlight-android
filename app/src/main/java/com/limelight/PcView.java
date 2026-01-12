@@ -150,34 +150,10 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
         // Set the correct layout for the PC grid
         pcGridAdapter.updateLayoutWithPreferences(this, PreferenceConfiguration.readPreferences(this));
 
-        ImageView imageView=findViewById(R.id.iv_root_view);
-
         PreferenceConfiguration pref=PreferenceConfiguration.readPreferences(this);
 
-        findViewById(R.id.iv_logo).setVisibility(pref.hide_screen_logo?View.GONE:View.VISIBLE);
+        updateRootView();
 
-        if(pref.enableScreenBg&&Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q){
-            File imageFile=new File(getFilesDir().getAbsolutePath(),"axi_screen_bg.png");
-            if(imageFile.exists()){
-                try{
-                    Glide.with(this)
-                            .load(imageFile)
-                            .skipMemoryCache(true)
-                            .diskCacheStrategy( DiskCacheStrategy.NONE )
-                            .into(imageView);
-                    imageView.setVisibility(View.VISIBLE);
-                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S&&pref.enableScreenObscure) {
-                        findViewById(R.id.iv_root_view).setRenderEffect(RenderEffect.createBlurEffect(25, 25, Shader.TileMode.CLAMP));
-                    }
-                }catch (Exception e){
-                    e.printStackTrace();
-                }
-            }else{
-                imageView.setVisibility(View.GONE);
-            }
-        }else{
-            imageView.setVisibility(View.GONE);
-        }
         if(!TextUtils.isEmpty(pref.screenLabel)){
             TextView tx_label=findViewById(R.id.tx_label);
             tx_label.setText(pref.screenLabel);
@@ -238,6 +214,39 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
             noPcFoundLayout.setVisibility(View.INVISIBLE);
         }
         pcGridAdapter.notifyDataSetChanged();
+    }
+
+    private void updateRootView() {
+        ImageView imageView=findViewById(R.id.iv_root_view);
+
+        PreferenceConfiguration pref=PreferenceConfiguration.readPreferences(this);
+
+        findViewById(R.id.iv_logo).setVisibility(pref.hide_screen_logo?View.GONE:View.VISIBLE);
+
+        if(pref.enableScreenBg&&Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q){
+            File imageFile=new File(getFilesDir().getAbsolutePath(),"axi_screen_bg.png");
+            if(imageFile.exists()){
+                try{
+                    Glide.with(this)
+                            .load(imageFile)
+                            .skipMemoryCache(true)
+                            .diskCacheStrategy( DiskCacheStrategy.NONE )
+                            .into(imageView);
+                    imageView.setVisibility(View.VISIBLE);
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S&&pref.enableScreenObscure) {
+                        int radiusX=Integer.parseInt(PreferenceManager.getDefaultSharedPreferences(this).getString("obscure_radiusX", "0"));
+                        int radiusY=Integer.parseInt(PreferenceManager.getDefaultSharedPreferences(this).getString("obscure_radiusY", "0"));
+                        findViewById(R.id.iv_root_view).setRenderEffect(RenderEffect.createBlurEffect(radiusX, radiusY, Shader.TileMode.CLAMP));
+                    }
+                }catch (Exception e){
+                    e.printStackTrace();
+                }
+            }else{
+                imageView.setVisibility(View.GONE);
+            }
+        }else{
+            imageView.setVisibility(View.GONE);
+        }
     }
 
     @Override
@@ -361,6 +370,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     protected void onResume() {
         super.onResume();
 
+        updateRootView();
         // Display a decoder crash notification if we've returned after a crash
         UiHelper.showDecoderCrashDialog(this);
 
@@ -371,7 +381,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     @Override
     protected void onPause() {
         super.onPause();
-
+        updateRootView();
         inForeground = false;
         stopComputerUpdates(false);
     }
@@ -379,7 +389,7 @@ public class PcView extends Activity implements AdapterFragmentCallbacks {
     @Override
     protected void onStop() {
         super.onStop();
-
+        updateRootView();
         Dialog.closeDialogs();
     }
 

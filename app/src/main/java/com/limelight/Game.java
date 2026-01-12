@@ -410,7 +410,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         inputCaptureProvider.setOnCaptureDeviceStatusListener(hasCompatibleDevice -> {
             updateLocalCursorVisibility(hasCompatibleDevice);
             if(conn!=null && !useAndroidCursor && cursorDraw){
-                Log.d("debug", "setOnCaptureDeviceStatusListener：切换远程电脑光标显示状态");
+//                Log.d("debug", "setOnCaptureDeviceStatusListener：切换远程电脑光标显示状态");
                 sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
             }
         });
@@ -1349,7 +1349,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     protected void onPause() {
         if(conn!=null && (useAndroidCursor || cursorDraw)){
             // 发送快捷键切换电脑光标显示状态
-            Log.d("debug", "onPause：切换远程电脑光标显示状态");
+//            Log.d("debug", "onPause：切换远程电脑光标显示状态");
             sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
         }
 
@@ -1492,10 +1492,10 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 Handler h = new Handler();
                 h.postDelayed(() -> {
                     // 切换为原生光标
-                    Log.d("debug", "开启原生光标模式，切换远程电脑光标显示状态");
+//                    Log.d("debug", "开启原生光标模式，切换远程电脑光标显示状态");
                     sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
                     inputCaptureProvider.disableCapture();
-                }, 500);
+                }, 50);
             }
         }
         else {
@@ -1589,7 +1589,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                             else
                                 Toast.makeText(this, "切换为远程鼠标模式：普通", Toast.LENGTH_SHORT).show();
 
-                            Log.d("debug", "KeyEvent.KEYCODE_V: 切换远程电脑光标显示状态");
+//                            Log.d("debug", "KeyEvent.KEYCODE_V: 切换远程电脑光标显示状态");
                             sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
 
                             updateLocalCursorVisibility(inputCaptureProvider.isCapturingActive());
@@ -2426,7 +2426,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                         return true;
                     }
                     else {
-                        Log.d("debug", "timeDiff: " + timeDiff);
+//                        Log.d("debug", "timeDiff: " + timeDiff);
                         detectScrolling = false;
                         waitRelease = false;
                         scrollTotal = 0;
@@ -2455,15 +2455,15 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 else if (action == MotionEvent.ACTION_UP) {
 //                    Log.d("debug", "scrollTotal: " + scrollTotal);
                     while(scrollTotal > 127.99 || scrollTotal < -127.99) {
-                        Log.d("debug", "滚轮还未发完");
+//                        Log.d("debug", "滚轮还未发完");
                         if (scrollTotal > 127.99){
                             scrollTotal = scrollTotal - 128;
-                            Log.d("debug", "send: up");
+//                            Log.d("debug", "send: up");
                             conn.sendMouseHighResScroll((short) 120);
                         }
                         else {
                             scrollTotal = scrollTotal + 128;
-                            Log.d("debug", "send: down");
+//                            Log.d("debug", "send: down");
                             conn.sendMouseHighResScroll((short) -120);
                         }
                     }
@@ -3232,7 +3232,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 // is too early to capture. We will delay a second to allow
                 // the spinner to dismiss before capturing.
                 Handler h = new Handler();
-                h.postDelayed(() -> setInputGrabState(true), 500);
+                h.postDelayed(() -> setInputGrabState(true), 50);
 
                 // Keep the display on
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
@@ -3240,7 +3240,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                 // Update GameManager state to indicate we're in game
                 UiHelper.notifyStreamConnected(Game.this);
 
-                hideSystemUi(1000);
+                hideSystemUi(100);
             }
         });
 
@@ -3611,7 +3611,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             Toast.makeText(this, "切换为本地鼠标模式：原生", Toast.LENGTH_SHORT).show();
             inputCaptureProvider.disableCapture();
             if (!cursorDraw) {
-                Log.d("debug", "切换远程电脑光标显示状态");
+//                Log.d("debug", "切换远程电脑光标显示状态");
                 sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
             }
         }
@@ -3621,7 +3621,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             else {
                 Toast.makeText(this, "切换为远程鼠标模式：普通", Toast.LENGTH_SHORT).show();
             }
-            Log.d("debug", "切换远程电脑光标显示状态");
+//            Log.d("debug", "切换远程电脑光标显示状态");
             sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
             inputCaptureProvider.enableCapture();
         }

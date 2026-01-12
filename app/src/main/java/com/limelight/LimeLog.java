@@ -7,8 +7,13 @@ import java.util.logging.Logger;
 public class LimeLog {
     private static final Logger LOGGER = Logger.getLogger(LimeLog.class.getName());
 
+    // 开关：BuildConfig.DEBUG 会在打正式包(Release)时自动变为 false
+    private static final boolean ENABLE_LOG = BuildConfig.DEBUG;
+
     public static void info(String msg) {
-        LOGGER.info(msg);
+        if (ENABLE_LOG) {
+            LOGGER.info(msg);
+        }
     }
     
     public static void warning(String msg) {
