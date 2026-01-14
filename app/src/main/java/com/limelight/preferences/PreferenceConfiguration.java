@@ -215,8 +215,11 @@ public class PreferenceConfiguration {
     //自定义按键映射
     public boolean enableCustomKeyMap;
 
-    //返回键映射鼠标中键
-    public boolean enableMouseMiddle;
+    //修复鼠标中键识别
+    public boolean fixMouseMiddle;
+
+    //修复本地鼠标滚轮识别
+    public boolean fixMouseWheel;
 
     //禁用内置的特殊指令
     public boolean enableClearDefaultSpecial;
@@ -877,7 +880,9 @@ public class PreferenceConfiguration {
 
         config.enableCustomKeyMap=prefs.getBoolean("checkbox_mouse_local_cursor",false);
 
-        config.enableMouseMiddle=prefs.getBoolean("checkbox_mouse_middle",false);
+        config.fixMouseMiddle=prefs.getBoolean("checkbox_mouse_middle",false);
+
+        config.fixMouseWheel=prefs.getBoolean("checkbox_mouse_wheel",false);
 
         config.enablePerfOverlayLiteDialog=prefs.getBoolean("checkbox_enable_perf_overlay_lite_dialog",false);
 
@@ -903,7 +908,7 @@ public class PreferenceConfiguration {
         config.mouseTouchPadSensitityY=prefs.getInt("seekbar_mouse_touchpad_sensitivity_y_opacity",100);
 
         config.uiThemeColorWhite=prefs.getBoolean("checkbox_ui_theme_white",true);
-        config.quickSoftKeyboardFingers=prefs.getInt("touch_number_quick_soft_keyboard",0);
+        config.quickSoftKeyboardFingers=prefs.getInt("touch_number_quick_soft_keyboard",5);
 
         config.enableAXFloating=prefs.getBoolean("checkbox_enable_ax_floating",false);
         config.axFloatingOperate =prefs.getInt("ax_floating_operate",0);

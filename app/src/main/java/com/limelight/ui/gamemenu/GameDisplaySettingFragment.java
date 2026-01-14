@@ -309,7 +309,7 @@ public class GameDisplaySettingFragment extends BaseGameMenuDialog {
     }
 
     private void initTouchNumber(){
-        int keyFlag=PreferenceManager.getDefaultSharedPreferences(getActivity()).getInt("touch_number_quick_soft_keyboard",0);
+        int keyFlag=PreferenceManager.getDefaultSharedPreferences(getActivity()).getInt("touch_number_quick_soft_keyboard",5);
         switch (keyFlag){
             case 0:
                 rg_game_setting_touch.check(R.id.rbt_game_setting_touch_1);
