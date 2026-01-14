@@ -244,6 +244,8 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private long lastMouseHoverTime = 0; // 记录最后一次鼠标活跃的时间
     private boolean waitRelease = false;
     private boolean detectScrolling = false;
+    private boolean detectMouseMiddle = false;
+    private boolean detectMouseMiddleDown = false;
 
     @SuppressLint("MissingInflatedId")
     @Override
@@ -1495,6 +1497,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 //                    Log.d("debug", "开启原生光标模式，切换远程电脑光标显示状态");
                     sendKeys(conn, new short[]{KeyboardTranslator.VK_LCONTROL,KeyboardTranslator.VK_LMENU, KeyboardTranslator.VK_LSHIFT, KeyboardTranslator.VK_N});
                     inputCaptureProvider.disableCapture();
+                    h.postDelayed(() -> {
+                        localCursorView.setVisibility(View.GONE);
+                    }, 50);
                 }, 50);
             }
         }
@@ -1672,6 +1677,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
     private Runnable escConfirmRunnable;
     @Override
     public boolean handleKeyDown(KeyEvent event) {
+//        Log.d("debug", "KeyDownGetKeyCode: " + event.getKeyCode());
         // 自定义组合键，只能其它+esc，esc+其它时，esc抬起时其它才会down
         int keyCode = event.getKeyCode();
         pressedKeys.add(keyCode);
@@ -1768,12 +1774,23 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
 
         // 鼠标中键（同时影响触摸返回）
-        if (prefConfig.enableMouseMiddle && eventSource == InputDevice.SOURCE_KEYBOARD &&
+        if (detectMouseMiddle && eventSource == InputDevice.SOURCE_KEYBOARD &&
                 event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
-//            Log.d("debug", "handleKeyDown: " + event.getKeyCode());
-            conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_MIDDLE);
-            return true;
+//            Log.d("debug", "触摸间隔时间: " + (android.os.SystemClock.uptimeMillis() - lastMouseHoverTime));
+            if (android.os.SystemClock.uptimeMillis() - lastMouseHoverTime < 250) {
+//                Log.d("debug", "handleKeyDown: " + event.getKeyCode());
+                detectMouseMiddleDown = true;
+                detectMouseMiddle = false;
+                conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_MIDDLE);
+                return true;
+            }
         }
+//        if (prefConfig.enableMouseMiddle && eventSource == InputDevice.SOURCE_KEYBOARD &&
+//                event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+////            Log.d("debug", "handleKeyDown: " + event.getKeyCode());
+//            conn.sendMouseButtonDown(MouseButtonPacket.BUTTON_MIDDLE);
+//            return true;
+//        }
 
         boolean handled = false;
 
@@ -1927,12 +1944,19 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         }
 
         // 鼠标中键（同时影响触摸返回）
-        if (prefConfig.enableMouseMiddle && eventSource == InputDevice.SOURCE_KEYBOARD &&
+        if (detectMouseMiddleDown && eventSource == InputDevice.SOURCE_KEYBOARD &&
                 event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+            detectMouseMiddleDown = false;
 //            Log.d("debug", "handleKeyUp: " + event.getKeyCode());
             conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_MIDDLE);
             return true;
         }
+//        if (prefConfig.enableMouseMiddle && eventSource == InputDevice.SOURCE_KEYBOARD &&
+//                event.getKeyCode() == KeyEvent.KEYCODE_BACK) {
+////            Log.d("debug", "handleKeyUp: " + event.getKeyCode());
+//            conn.sendMouseButtonUp(MouseButtonPacket.BUTTON_MIDDLE);
+//            return true;
+//        }
 
         boolean handled = false;
         if (ControllerHandler.isGameControllerDevice(event.getDevice())) {
@@ -2249,8 +2273,6 @@ public class Game extends Activity implements SurfaceHolder.Callback,
         return new float[] { cartesianToR(contactAreaMajorCartesian), cartesianToR(contactAreaMinorCartesian) };
     }
 
-
-
     private boolean sendPenEventForPointer(View view, MotionEvent event, byte eventType, byte toolType, int pointerIndex) {
         byte penButtons = 0;
         if ((event.getButtonState() & MotionEvent.BUTTON_STYLUS_PRIMARY) != 0) {
@@ -2332,7 +2354,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             eventSend = sendPenEventForPointer(view, event, eventType, toolType, event.getActionIndex());
         }
 
-        // 触控事件，隐藏绘制
+        // 触控笔事件，隐藏绘制
         if (eventSend && cursorDraw && localCursorView.getVisibility() == View.VISIBLE)
             localCursorView.setVisibility(View.GONE);
         return eventSend;
@@ -2375,7 +2397,7 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             eventSend = sendTouchEventForPointer(view, event, eventType, event.getActionIndex());
         }
 
-        // 触控笔事件，隐藏绘制
+        // 触控事件，隐藏绘制
         if (eventSend && cursorDraw && localCursorView.getVisibility() == View.VISIBLE)
             localCursorView.setVisibility(View.GONE);
         return eventSend;
@@ -2397,7 +2419,9 @@ public class Game extends Activity implements SurfaceHolder.Callback,
 //        Log.d("debug", "event.getY(): " + event.getY());
 
         // 支持华为平板识别原生鼠标下的滚动逻辑：一次8194鼠标滑动+五次4098屏幕滑动
-        if (eventSource == InputDevice.SOURCE_MOUSE && (event.getActionMasked() == MotionEvent.ACTION_HOVER_MOVE ||
+        if (prefConfig.fixMouseWheel && useAndroidCursor &&
+                eventSource == InputDevice.SOURCE_MOUSE &&
+                (event.getActionMasked() == MotionEvent.ACTION_HOVER_MOVE ||
                 event.getActionMasked() == MotionEvent.ACTION_MOVE ||
                 event.getActionMasked() == MotionEvent.ACTION_DOWN ||
                 event.getActionMasked() == MotionEvent.ACTION_BUTTON_PRESS)){
@@ -2486,6 +2510,24 @@ public class Game extends Activity implements SurfaceHolder.Callback,
             else if (!waitRelease){
                 detectScrolling = false;
                 scrollTotal = 0;
+            }
+        }
+
+        // 支持华为鼠标中键
+        if (prefConfig.fixMouseMiddle) {
+            if (useAndroidCursor) {
+                // 本地模式：8194：7+7（x和y不变）
+                if (eventSource == InputDevice.SOURCE_MOUSE &&
+                        event.getActionMasked() == MotionEvent.ACTION_HOVER_MOVE) {
+                    lastMouseHoverTime = android.os.SystemClock.uptimeMillis();
+                    detectMouseMiddle = true;
+                }
+            }
+            else if (eventSource == InputDevice.SOURCE_MOUSE_RELATIVE &&
+                    event.getActionMasked() == MotionEvent.ACTION_BUTTON_RELEASE) {
+                // 远程模式：131076：2+11+12+2（x和y全0.0，中间可能夹杂2，依靠12来检测）
+                lastMouseHoverTime = android.os.SystemClock.uptimeMillis();
+                detectMouseMiddle = true;
             }
         }
 
@@ -2749,70 +2791,67 @@ public class Game extends Activity implements SurfaceHolder.Callback,
                     yOffset = 0.f;
                 }
 
-                if (prefConfig.enableMouseMiddle) {
-                    //四指打开菜单，五指打开输入法
+                //四指打开菜单，五指打开输入法
+//                switch (event.getActionMasked()){
+//                    case MotionEvent.ACTION_DOWN:
+//                        maxPointerCount = 1;
+//                        break;
+//                    case MotionEvent.ACTION_POINTER_DOWN:
+//                        maxPointerCount = Math.max(maxPointerCount, event.getPointerCount());
+//                        break;
+//                    case MotionEvent.ACTION_UP:
+//                    case MotionEvent.ACTION_POINTER_UP:
+//                        if (event.getPointerCount() == 1 &&
+//                                (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || (event.getFlags() & MotionEvent.FLAG_CANCELED) == 0)) {
+//                            if(maxPointerCount == 4){
+//                                // 打开菜单
+//                                if(prefConfig.enableQtDialog){
+//                                    showGameMenu(null);
+//                                }
+//                                // 重置 maxPointerCount
+//                                maxPointerCount = 0;
+//                                conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0, 0, 0, 0, 0, 0, MoonBridge.LI_ROT_UNKNOWN);
+//                                return true;
+//                            }
+//                            else if (maxPointerCount == 5) {
+//                                toggleKeyboard();
+//                                // 重置 maxPointerCount
+//                                maxPointerCount = 0;
+//                                conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0, 0, 0, 0, 0, 0, MoonBridge.LI_ROT_UNKNOWN);
+//                                return true;
+//                            }
+//                        }
+//                        break;
+//                }
+
+                //五指打开输入法
+                if(prefConfig.quickSoftKeyboardFingers>0){
                     switch (event.getActionMasked()){
-                        case MotionEvent.ACTION_DOWN:
-                            maxPointerCount = 1;
-                            break;
                         case MotionEvent.ACTION_POINTER_DOWN:
-                            maxPointerCount = Math.max(maxPointerCount, event.getPointerCount());
+                            if(event.getPointerCount() == prefConfig.quickSoftKeyboardFingers){
+                                threeFingerDownTime = event.getEventTime();
+                                // Cancel the first and second touches to avoid
+                                // erroneous events
+                                for (TouchContext aTouchContext : touchContextMap) {
+                                    aTouchContext.cancelTouch();
+                                }
+                                return true;
+                            }
                             break;
                         case MotionEvent.ACTION_UP:
                         case MotionEvent.ACTION_POINTER_UP:
                             if (event.getPointerCount() == 1 &&
                                     (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || (event.getFlags() & MotionEvent.FLAG_CANCELED) == 0)) {
-                                if(maxPointerCount == 4){
-                                    // 打开菜单
-                                    if(prefConfig.enableQtDialog){
-                                        showGameMenu(null);
-                                    }
-                                    // 重置 maxPointerCount
-                                    maxPointerCount = 0;
-                                    conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0, 0, 0, 0, 0, 0, MoonBridge.LI_ROT_UNKNOWN);
-                                    return true;
-                                }
-                                else if (maxPointerCount == 5) {
+                                // All fingers up
+                                if (event.getEventTime() - threeFingerDownTime < THREE_FINGER_TAP_THRESHOLD) {
+                                    // This is a 3 finger tap to bring up the keyboard
+                                    conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0,
+                                            0, 0, 0, 0, 0,
+                                            MoonBridge.LI_ROT_UNKNOWN);
                                     toggleKeyboard();
-                                    // 重置 maxPointerCount
-                                    maxPointerCount = 0;
-                                    conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0, 0, 0, 0, 0, 0, MoonBridge.LI_ROT_UNKNOWN);
                                     return true;
                                 }
                             }
-                            break;
-                    }
-                }
-                else {
-                    //五指打开输入法
-                    if(prefConfig.quickSoftKeyboardFingers>0){
-                        switch (event.getActionMasked()){
-                            case MotionEvent.ACTION_POINTER_DOWN:
-                                if(event.getPointerCount() == prefConfig.quickSoftKeyboardFingers){
-                                    threeFingerDownTime = event.getEventTime();
-                                    // Cancel the first and second touches to avoid
-                                    // erroneous events
-                                    for (TouchContext aTouchContext : touchContextMap) {
-                                        aTouchContext.cancelTouch();
-                                    }
-                                    return true;
-                                }
-                                break;
-                            case MotionEvent.ACTION_UP:
-                            case MotionEvent.ACTION_POINTER_UP:
-                                if (event.getPointerCount() == 1 &&
-                                        (Build.VERSION.SDK_INT < Build.VERSION_CODES.TIRAMISU || (event.getFlags() & MotionEvent.FLAG_CANCELED) == 0)) {
-                                    // All fingers up
-                                    if (event.getEventTime() - threeFingerDownTime < THREE_FINGER_TAP_THRESHOLD) {
-                                        // This is a 3 finger tap to bring up the keyboard
-                                        conn.sendTouchEvent(MoonBridge.LI_TOUCH_EVENT_CANCEL_ALL, 0,
-                                                0, 0, 0, 0, 0,
-                                                MoonBridge.LI_ROT_UNKNOWN);
-                                        toggleKeyboard();
-                                        return true;
-                                    }
-                                }
-                        }
                     }
                 }
 

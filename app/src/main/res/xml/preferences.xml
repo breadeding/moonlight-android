@@ -202,9 +202,15 @@
 
         <CheckBoxPreference
             android:key="checkbox_mouse_middle"
-            android:title="启用鼠标中键"
-            android:summary="在一些设备上鼠标中键可能被识别为返回键，选中则强制映射为鼠标中键，此时无法触摸返回，因此固定使用四指触摸打开串流菜单，五指打开输入法。"
-            android:defaultValue="false" />
+            android:title="修复鼠标中键"
+            android:summary="在一些设备上鼠标中键可能被识别为返回键，选中尝试修复此问题。"
+            android:defaultValue="true" />
+
+        <CheckBoxPreference
+            android:key="checkbox_mouse_wheel"
+            android:title="修复本地鼠标滚轮"
+            android:summary="在一些设备上使用本地鼠标滚轮可能产生触屏滑动事件，选中尝试修复此问题。"
+            android:defaultValue="true" />
 
 <!--        <CheckBoxPreference-->
 <!--            android:key="checkbox_multi_touch_screen"-->
