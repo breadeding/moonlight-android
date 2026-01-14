@@ -41,6 +41,7 @@ import android.graphics.drawable.BitmapDrawable;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.IBinder;
+import android.preference.PreferenceManager;
 import android.view.ContextMenu;
 import android.view.Menu;
 import android.view.MenuItem;
@@ -342,7 +343,9 @@ public class AppView extends Activity implements AdapterFragmentCallbacks {
                             .into(imageView);
                     imageView.setVisibility(View.VISIBLE);
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S&&pref.enableScreenObscure) {
-                        findViewById(R.id.iv_root_view).setRenderEffect(RenderEffect.createBlurEffect(25, 25, Shader.TileMode.CLAMP));
+                        int radiusX=Integer.parseInt(PreferenceManager.getDefaultSharedPreferences(this).getString("obscure_radiusX", "0"));
+                        int radiusY=Integer.parseInt(PreferenceManager.getDefaultSharedPreferences(this).getString("obscure_radiusY", "0"));
+                        findViewById(R.id.iv_root_view).setRenderEffect(RenderEffect.createBlurEffect(radiusX, radiusY, Shader.TileMode.CLAMP));
                     }
                 }catch (Exception e){
                     e.printStackTrace();

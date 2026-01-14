@@ -701,6 +701,22 @@
             android:summary="自定义背景图是否进行高斯模糊处理，安卓12以上支持。"
             android:defaultValue="true" />
 
+        <ListPreference
+            android:key="obscure_radiusX"
+            android:title="X轴模糊半径"
+            android:summary="模糊半径越大，图片越模糊。"
+            android:entries="@array/obscure_radius"
+            android:entryValues="@array/obscure_radius"
+            android:defaultValue="20" />
+
+        <ListPreference
+            android:key="obscure_radiusY"
+            android:title="Y轴模糊半径"
+            android:summary="模糊半径越大，图片越模糊。"
+            android:entries="@array/obscure_radius"
+            android:entryValues="@array/obscure_radius"
+            android:defaultValue="20" />
+
         <EditTextPreference
             android:key="change_screen_label_key"
             android:defaultValue="@string/app_label"
@@ -730,12 +746,7 @@
         <com.limelight.preferences.WebLauncherPreference
             android:title="软件版本更新"
             android:summary="跳转到github获取releases"
-            url="https://github.com/Axixi2233/moonlight-android/releases"/>
-
-        <com.limelight.preferences.WebLauncherPreference
-            android:title="关于作者"
-            android:summary="跳转到B站阿西西的日常个人主页"
-            url="https://space.bilibili.com/16893379"/>
+            url="https://github.com/breadeding/moonlight-android/releases"/>
 
     </PreferenceCategory>
 
