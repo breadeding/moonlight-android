@@ -25,7 +25,7 @@
   > * 安卓媒体键 (上一首/播放暂停/下一首) → **F5/F10/F11**
 
 * **支持鼠标中键**
-  > *部分设备将鼠标中键识别为返回键，此功能开启可以强制映射返回键为鼠标中键，此时无法触摸返回，因此此功能开启时固定使用四指触摸打开串流菜单，五指触摸打开输入法*
+  > *部分设备将鼠标中键识别为返回键，此功能开启可以区分触摸返回和鼠标中键造成的返回*
 
 <br><br>
 
@@ -51,7 +51,7 @@ This project implements functional improvements to [Moonlight Android client, mo
   > * Android Screenshot Key → **Windows Screenshot**
   > * Media Keys (Prev/Pause/Next) → **F5/F10/F11**
 * **Middle Mouse Button Support**
-  > *Fixes issues where devices map the middle button to "Back." When enabled, the Back key is forced to Middle Click. Note: Back navigation is disabled; use 4-finger tap for the menu and 5-finger tap for the IME (Keyboard).*
+  > *Some devices recognize the middle mouse button as the return key. Turning this function on can distinguish between touch return and return caused by the middle mouse button.*
 
 <br><br>
 
