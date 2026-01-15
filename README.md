@@ -3,7 +3,7 @@
 此项目实现对[Moonlight安卓端 阿西西修改版](https://github.com/Axixi2233/moonlight-android)的功能改进<br><br>
 
 
-# 目前已实现功能
+# 特性
 
 * **自动获取无障碍权限**
   > *需要通过ADB授权android.permission.WRITE_SECURE_SETTINGS*
