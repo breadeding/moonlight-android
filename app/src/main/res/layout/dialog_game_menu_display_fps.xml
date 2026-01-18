@@ -79,6 +79,19 @@
                     android:background="@drawable/ic_game_menu_btn_selector"
                     android:drawableLeft="@drawable/ic_axi_game_pad_bitrate"
                     android:drawablePadding="4dp"
+                    android:id="@+id/bt_display_fps_24"
+                    android:gravity="left|center_vertical"
+                    android:padding="10dp"
+                    android:text="24 fps"
+                    android:textSize="11dp" />
+
+                <Button
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:layout_marginTop="4dp"
+                    android:background="@drawable/ic_game_menu_btn_selector"
+                    android:drawableLeft="@drawable/ic_axi_game_pad_bitrate"
+                    android:drawablePadding="4dp"
                     android:id="@+id/bt_display_fps_30"
                     android:gravity="left|center_vertical"
                     android:padding="10dp"

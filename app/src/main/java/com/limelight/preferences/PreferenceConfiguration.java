@@ -878,7 +878,7 @@ public class PreferenceConfiguration {
 
         config.enableMouseDraw=prefs.getBoolean("checkbox_mouse_remote_draw",false);
 
-        config.enableCustomKeyMap=prefs.getBoolean("checkbox_mouse_local_cursor",false);
+        config.enableCustomKeyMap=prefs.getBoolean("checkbox_special_key_map",false);
 
         config.fixMouseMiddle=prefs.getBoolean("checkbox_mouse_middle",false);
 
