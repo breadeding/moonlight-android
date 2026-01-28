@@ -50,8 +50,9 @@ public class GameDisplayFpsFragment extends BaseGameMenuDialog implements View.O
             tx_title.setText(title);
         }
         ibtn_back.setOnClickListener(this);
-        v.findViewById(R.id.bt_display_fps_60).setOnClickListener(this);
+        v.findViewById(R.id.bt_display_fps_24).setOnClickListener(this);
         v.findViewById(R.id.bt_display_fps_30).setOnClickListener(this);
+        v.findViewById(R.id.bt_display_fps_60).setOnClickListener(this);
         v.findViewById(R.id.bt_display_fps_90).setOnClickListener(this);
         v.findViewById(R.id.bt_display_fps_120).setOnClickListener(this);
         v.findViewById(R.id.bt_display_fps_144).setOnClickListener(this);
@@ -90,6 +91,10 @@ public class GameDisplayFpsFragment extends BaseGameMenuDialog implements View.O
     public void onClick(View v) {
         dismiss();
         if(onClick==null){
+            return;
+        }
+        if(v.getId()==R.id.bt_display_fps_24){
+            onClick.click(24);
             return;
         }
         if(v.getId()==R.id.bt_display_fps_30){
