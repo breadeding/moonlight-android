@@ -3,13 +3,13 @@
 此项目实现对[Moonlight安卓端 阿西西修改版](https://github.com/Axixi2233/moonlight-android)的功能改进<br><br>
 
 
-# 目前已实现功能
+# 特性
 
 * **自动获取无障碍权限**
   > *需要通过ADB授权android.permission.WRITE_SECURE_SETTINGS*
 
 * **安卓本地鼠标特殊滚轮的识别**
-  > *在使用安卓本地鼠标光标时，部分设备无法正确获取滚轮事件，如Matepad，滚动滚动时会产生触屏效果造成大范围滑动*
+  > *在使用安卓本地鼠标光标时，部分设备无法正确获取滚轮事件，如华为安卓平板，滚动滚动时会产生触屏效果造成大范围滑动*
 
 * **非本地鼠标模式也支持绘制本地鼠标光标**
   > *延迟高于本地鼠标，但略低于远程鼠标，如果使用本地鼠标光标仍有问题，可以使用此方法作为替代*
@@ -25,7 +25,7 @@
   > * 安卓媒体键 (上一首/播放暂停/下一首) → **F5/F10/F11**
 
 * **支持鼠标中键**
-  > *部分设备将鼠标中键识别为返回键，此功能开启可以强制映射返回键为鼠标中键，此时无法触摸返回，因此此功能开启时固定使用四指触摸打开串流菜单，五指触摸打开输入法*
+  > *部分设备将鼠标中键识别为返回键，此功能开启可以区分触摸返回和鼠标中键造成的返回*
 
 <br><br>
 
@@ -39,7 +39,7 @@ This project implements functional improvements to [Moonlight Android client, mo
 * **Auto-grant Accessibility Permissions**
   > *Requires ADB authorization for android.permission.WRITE_SECURE_SETTINGS.*
 * **Android Local Mouse Scroll Wheel Fix**
-  > *Resolves scrolling issues on specific devices (e.g., MatePad) where scroll wheel inputs are incorrectly interpreted as touch swipes, causing excessive screen movement.*
+  > *Resolves scrolling issues on specific devices (e.g., MatePad with Android) where scroll wheel inputs are incorrectly interpreted as touch swipes, causing excessive screen movement.*
 * **Local Cursor Rendering in Non-Local Mouse Mode**
   > *Provides a latency-optimized alternative. Latency is higher than the system local cursor but slightly lower than the remote stream cursor. Ideal as a fallback if the local mouse mode encounters issues.*
 * **Smart Remote Cursor Visibility Sync**
@@ -51,7 +51,7 @@ This project implements functional improvements to [Moonlight Android client, mo
   > * Android Screenshot Key → **Windows Screenshot**
   > * Media Keys (Prev/Pause/Next) → **F5/F10/F11**
 * **Middle Mouse Button Support**
-  > *Fixes issues where devices map the middle button to "Back." When enabled, the Back key is forced to Middle Click. Note: Back navigation is disabled; use 4-finger tap for the menu and 5-finger tap for the IME (Keyboard).*
+  > *Some devices recognize the middle mouse button as the return key. Turning this function on can distinguish between touch return and return caused by the middle mouse button.*
 
 <br><br>
 
